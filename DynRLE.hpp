@@ -26,7 +26,6 @@
 
 template <uint8_t B> class BTreeUpperNode;
 
-
 template <uint8_t B = 64> // B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B
 class DynRLE
 {
@@ -146,7 +145,7 @@ public:
 
   size_t getSumOfWeight(const uint64_t ch) const noexcept {
     const auto * retRootS = searchCharA(ch);
-    if (retRootS->isDummy() || charS_[reinterpret_cast<uint64_t>(retRootS->getLmBtm())] != ch) {
+    if (retRootS->isDummy() || charS_[reinterpret_cast<uintptr_t>(retRootS->getLmBtm())] != ch) {
       return 0;
     }
     return retRootS->getSumOfWeight();
@@ -427,7 +426,7 @@ public:
     for (const auto * rootS = getFstRootS();
          reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
-      const auto btmS = reinterpret_cast<uint64_t>(rootS->getLmBtm());
+      const uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm());
       os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight() << ") ";
     }
     os << std::endl;
@@ -445,7 +444,7 @@ public:
     // if (sum >= rootM_->getSumOfWeight()) {
     //   return BTreeUpperNode<B>::NOTFOUND;
     // }
-    uint64_t btmM = reinterpret_cast<uint64_t>(rootM_->searchPos(pos));
+    uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->searchPos(pos));
 
     const auto * wArray = weightArrayVec_[btmM];
     uint8_t i = 0;
@@ -489,10 +488,10 @@ private:
     // if (pos >= rootS->getSumOfWeight()) {
     //   return BTreeUpperNode<B>::NOTFOUND;
     // }
-    uint64_t idxS = B * reinterpret_cast<uint64_t>(rootS->searchPos(pos));
+    uint64_t idxS = B * reinterpret_cast<uintptr_t>(rootS->searchPos(pos));
 
     while (true) {
-      uint64_t weight = getWeightFromIdxS(idxS);
+      auto weight = getWeightFromIdxS(idxS);
       if (pos >= weight) {
         pos -= weight;
         ++idxS;
@@ -525,7 +524,7 @@ private:
         break;
       }
     }
-    const uint64_t idxS = B * reinterpret_cast<uint64_t>(nodeS);
+    const uint64_t idxS = B * reinterpret_cast<uintptr_t>(nodeS);
     uint8_t lb = 0;
     uint8_t ub = numChildrenS_[idxS / B];
     while (lb+1 != ub) {
@@ -547,7 +546,7 @@ public:
       return idxM - 1;
     }
     const uint64_t prevBtmM
-      = reinterpret_cast<uint64_t>(parentM_[idxM / B]->getPrevBtm(idxInSiblingM_[idxM / B]));
+      = reinterpret_cast<uintptr_t>(parentM_[idxM / B]->getPrevBtm(idxInSiblingM_[idxM / B]));
     if (prevBtmM != BTreeUpperNode<B>::NOTFOUND) {
       return prevBtmM * B + getNumChildrenM(prevBtmM) - 1;
     }
@@ -560,7 +559,7 @@ public:
       return idxM + 1;
     }
     const uint64_t nextBtmM
-      = reinterpret_cast<uint64_t>(parentM_[idxM / B]->getNextBtm(idxInSiblingM_[idxM / B]));
+      = reinterpret_cast<uintptr_t>(parentM_[idxM / B]->getNextBtm(idxInSiblingM_[idxM / B]));
     if (nextBtmM != BTreeUpperNode<B>::NOTFOUND) {
       return nextBtmM * B;
     }
@@ -594,12 +593,12 @@ public:
 
 
 private:
-  uint64_t getPrevIdxS(const uint64_t idxS) const noexcept {
+  uint64_t getPrevIdxS(const size_t idxS) const noexcept {
     if (idxS % B) {
       return idxS - 1;
     }
     const uint64_t prevBtmS
-      = reinterpret_cast<uint64_t>(parentS_[idxS / B]->getPrevBtm(idxInSiblingS_[idxS / B]));
+      = reinterpret_cast<uintptr_t>(parentS_[idxS / B]->getPrevBtm(idxInSiblingS_[idxS / B]));
     if (prevBtmS != BTreeUpperNode<B>::NOTFOUND) {
       return prevBtmS * B + numChildrenS_[prevBtmS] - 1;
     }
@@ -607,12 +606,12 @@ private:
   }
 
 
-  uint64_t getNextIdxS(const uint64_t idxS) const noexcept {
+  uint64_t getNextIdxS(const size_t idxS) const noexcept {
     if ((idxS % B) + 1 < numChildrenS_[idxS / B]) {
       return idxS + 1;
     }
     const uint64_t nextBtmS
-      = reinterpret_cast<uint64_t>(parentS_[idxS / B]->getNextBtm(idxInSiblingS_[idxS / B]));
+      = reinterpret_cast<uintptr_t>(parentS_[idxS / B]->getNextBtm(idxInSiblingS_[idxS / B]));
     if (nextBtmS != BTreeUpperNode<B>::NOTFOUND) {
       return nextBtmS * B;
     }
@@ -636,9 +635,9 @@ private:
   uint64_t getLabelFromNodeU(const BTreeUpperNode<B> * nodeU, const bool isChildOfBorder)  const noexcept {
     uint64_t idxS;
     if (!isChildOfBorder) {
-      idxS = B * reinterpret_cast<uint64_t>(nodeU->getLmBtm());
+      idxS = B * reinterpret_cast<uintptr_t>(nodeU->getLmBtm());
     } else {
-      idxS = B * reinterpret_cast<uint64_t>(nodeU);
+      idxS = B * reinterpret_cast<uintptr_t>(nodeU);
     }
     uint64_t idxM = idxS2M_.read(idxS); // idxM corresponding to the left most idxS in btmS
     return labelM_[idxM / B];
@@ -648,22 +647,22 @@ private:
   uint64_t getCharFromNodeA(const BTreeUpperNode<B> * nodeA, const bool isChildOfBorder) const noexcept {
     uint64_t btmS;
     if (!isChildOfBorder) {
-      btmS = reinterpret_cast<uint64_t>(nodeA->getLmBtm()->getLmBtm());
+      btmS = reinterpret_cast<uintptr_t>(nodeA->getLmBtm()->getLmBtm());
     } else {
-      btmS = reinterpret_cast<uint64_t>(nodeA->getLmBtm());
+      btmS = reinterpret_cast<uintptr_t>(nodeA->getLmBtm());
     }
     return charS_[btmS];
   }
 
 
   uint64_t getPrevBtmM(const uint64_t btmM) const noexcept {
-    return reinterpret_cast<uint64_t>(parentM_[btmM]->getPrevBtm(idxInSiblingM_[btmM]));
+    return reinterpret_cast<uintptr_t>(parentM_[btmM]->getPrevBtm(idxInSiblingM_[btmM]));
   }
 
 
   uint64_t getNextBtmM(const uint64_t btmM) const noexcept {
     //    debugstream2 << __LINE__ << ": getNextBtmM: btmM " << btmM << ", parentM_[btmM] " << parentM_[btmM] << std::endl;
-    return reinterpret_cast<uint64_t>(parentM_[btmM]->getNextBtm(idxInSiblingM_[btmM]));
+    return reinterpret_cast<uintptr_t>(parentM_[btmM]->getNextBtm(idxInSiblingM_[btmM]));
   }
 
 
@@ -873,7 +872,7 @@ private:
     for (uint8_t i = B/2; i < B; ++i) {
       sum += wArray0->read(i);
     }
-    const uint64_t newBtmM = splitBtmM(wArray0->getW(), btmM, sum);
+    const auto newBtmM = splitBtmM(wArray0->getW(), btmM, sum);
     WBitsArray * wArray1 = weightArrayVec_[newBtmM];
     mvWBA_SameW(wArray0->getItrAt(B/2), wArray1->getItrAt(0), B/2);
     wArray0->resize(B/2);
@@ -903,7 +902,7 @@ private:
     for (uint8_t i = B/2; i < B; ++i) {
       sum += getWeightFromIdxS(btmS * B + i);
     }
-    const uint64_t newBtmS = splitBtmS(btmS, sum);
+    const auto newBtmS = splitBtmS(btmS, sum);
     numChildrenS_[btmS] = B/2;
     numChildrenS_[newBtmS] = B/2;
     mvIdxFwd(idxS2M_, btmS*B + B/2, newBtmS*B, B/2, idxM2S_);
@@ -923,13 +922,13 @@ private:
     const uint8_t newNum = (oriNum < B) ? oriNum + 1 : B/2 + (idxInSib < B/2);
     // update links to upper nodes
     for (uint8_t i = idxInSib + 1; i < newNum; ++i) {
-      const uint64_t tmp = reinterpret_cast<uint64_t>(uNode->getChildPtr(i));
+      const uint64_t tmp = reinterpret_cast<uintptr_t>(uNode->getChildPtr(i));
       parentArray[tmp] = uNode;
       idxInSibArray[tmp] = i;
     }
     if (oriNum == B) { // split
       for (uint8_t i = 0; i < B/2 + (idxInSib >= B/2); ++i) { // for children of newNode
-        const uint64_t tmp = reinterpret_cast<uint64_t>(newNode->getChildPtr(i));
+        const uint64_t tmp = reinterpret_cast<uintptr_t>(newNode->getChildPtr(i));
         parentArray[tmp] = newNode;
         idxInSibArray[tmp] = i;
       }
@@ -953,7 +952,7 @@ private:
       if (i > 0) {
         return idxM2S_.read(i);
       } else {
-        return B * reinterpret_cast<uint64_t>(rootS->getLmBtm());
+        return B * reinterpret_cast<uintptr_t>(rootS->getLmBtm());
       }
     }
   }
@@ -964,15 +963,15 @@ private:
    * return idx to the inserted run.
    */
   uint64_t insertNewRunAfter(const uint64_t ch, const uint64_t weight, const uint64_t idxM) {
-    const uint64_t newIdxM = makeSpaceAfterIdxM(idxM);
+    const auto newIdxM = makeSpaceAfterIdxM(idxM);
     auto * retRootS = searchCharA(ch);
     uint64_t idxS;
-    if (retRootS->isDummy() || charS_[reinterpret_cast<uint64_t>(retRootS->getLmBtm())] != ch) {
+    if (retRootS->isDummy() || charS_[reinterpret_cast<uintptr_t>(retRootS->getLmBtm())] != ch) {
       idxS = setupNewSTree(retRootS, ch);
     } else {
       idxS = getPredIdxSFromIdxM(retRootS, ch, newIdxM);
     }
-    const uint64_t newIdxS = makeSpaceAfterIdxS(idxS);
+    const auto newIdxS = makeSpaceAfterIdxS(idxS);
     idxM2S_.write(newIdxS, newIdxM);
     idxS2M_.write(newIdxM, newIdxS);
     changeWeight(newIdxM, weight);
@@ -982,7 +981,7 @@ private:
 
 public:
   uint64_t pushbackRun(const uint64_t ch, const uint64_t weight) {
-    const auto btmM = reinterpret_cast<uint64_t>(rootM_->getRmBtm());
+    const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
     return insertNewRunAfter(ch, weight, btmM * B + getNumChildrenM(btmM) - 1);
   }
 
