@@ -1,18 +1,14 @@
 /**
- * @file DynRLE.hpp
- * @brief Dynamic run-length encoding supporting access, rank, select, and insert (TODO delete).
+ * @file BTree.hpp
+ * @brief
  * @author Tomohiro I
- * @date 2017-01-15
+ * @date 2017-01-26
  */
 #ifndef INCLUDE_GUARD_BTree
 #define INCLUDE_GUARD_BTree
 
-#include <iostream>
 #include <algorithm>
 #include <cassert>
-#include <string>
-#include <fstream>
-#include <sstream>
 
 
 
