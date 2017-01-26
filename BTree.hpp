@@ -15,6 +15,8 @@
 template <uint8_t B = 64> // B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B
 class BTreeUpperNode
 {
+  //  friend BTreeUpperNode<B>;
+
   uint64_t psum_[B]; // partial sum: psum_[i] = sum_{i = 0}^{i} [weight of i-th child (0base)]
   BTreeUpperNode<B> * parent_;
   uint8_t idxInSibling_; // this node is the 'idxInSibling_'-th child (0base) of its parent
@@ -47,6 +49,7 @@ public:
 
 
   //// simple getter
+public:
   uint64_t getPSum(uint8_t i) const noexcept {
     assert(i < numChildren_);
     return psum_[i];
@@ -100,7 +103,7 @@ public:
   }
 
 
-  ////
+  //// function to traverse tree
   BTreeUpperNode<B> * getLmBtm() const noexcept {
     return lmBtm_;
   }
@@ -149,21 +152,6 @@ public:
   }
 
 
-  // uint64_t calcPSum(uint8_t idx, bool inclusive) const noexcept {
-  //   assert(isBorder());
-  //   const auto * node = this;
-  //   uint64_t ret = (inclusive) ? this->getWeightOfChild(idx) : 0;
-  //   while (true) {
-  //     ret += (idx > 0) ? node->getPSum(idx - 1) : 0;
-  //     if (node->isRoot()) {
-  //       return ret;
-  //     }
-  //     idx = node->getIdxInSibling();
-  //     node = node->getParent();
-  //   }
-  // }
-
-
   /**
    * @fn
    * 
@@ -199,100 +187,8 @@ public:
   }
 
 
-  ////
-  size_t calcMemBytes() const noexcept { //使用メモリ計算用
-    size_t sumOfSize = sizeof(*this);
-    if (!isBorder()) {
-      for (uint8_t i = 0; i < numChildren_; ++i) {
-        sumOfSize += children_[i]->calcMemBytes();
-      }
-    }
-    return sumOfSize;
-  }
-
-
-  size_t calcNumUsed() const noexcept {
-    size_t numOfUsed = numChildren_;
-    if (!isBorder()) {
-      for (uint8_t i = 0; i < numChildren_; ++i) {
-        numOfUsed += children_[i]->calcNumUsed();
-      }
-    }
-    return numOfUsed;
-  }
-
-
-  size_t calcNumSlots() const noexcept {
-    size_t numOfSlots = B;
-    if (!isBorder()) {
-      for (uint8_t i = 0; i < numChildren_; ++i) {
-        numOfSlots += children_[i]->calcNumSlots();
-      }
-    }
-    return numOfSlots;
-  }
-
-
-  //// modify
-  void setParentRef(BTreeUpperNode<B> * newParent, uint8_t newIdxInSibling) noexcept {
-    this->parent_ = newParent;
-    this->idxInSibling_ = newIdxInSibling;
-  }
-
-
-  void setChildPtr(BTreeUpperNode * child, uint8_t idx) noexcept {
-    assert(idx < numChildren_);
-    children_[idx] = child;
-  }
-
-
-  void pushbackUNode(BTreeUpperNode<B> * child) noexcept {
-    assert(numChildren_ < B);
-    children_[numChildren_] = child;
-    psum_[numChildren_] = (numChildren_ > 0) ?
-      psum_[numChildren_ - 1] + child->getSumOfWeight() : child->getSumOfWeight();
-    child->setParentRef(this, numChildren_);
-    ++numChildren_;
-  }
-
-
-  void pushbackBtm(BTreeUpperNode<B> * child, const uint64_t psumVal) noexcept {
-    assert(isBorder());
-    assert(numChildren_ < B);
-    children_[numChildren_] = child;
-    psum_[numChildren_] = psumVal;
-    ++numChildren_;
-  }
-
-
-  // void setRmBtm(BTreeUpperNode<B> * btmRoot) noexcept {
-  //   rmBtm_ = btmRoot;
-  // }
-
-
-  // void updateRmBtm(BTreeUpperNode<B> * btmRoot) noexcept {
-  //   debugstream2 << __LINE__ << ": updateRmBtm: " << btmRoot << std::endl;
-  //   auto * node = this;
-  //   while (true) {
-  //     node->setRmBtm(btmRoot);
-  //     if (node->isRoot() || node->getIdxInSibling() + 1 < node->getParent()->getNumChildren()) {
-  //       break;
-  //     }
-  //     node = node->getParent();
-  //   }
-  // }
-
-
-  // void unroot() noexcept {
-  //   flags_ &= ~isRootBit;
-  // }
-
-
-  // void setNumChildren(uint8_t n) noexcept {
-  //   numChildren_ = n;
-  // }
-
-
+  //// private modifier (intend to call from member function of BTreeUpperNode)
+private:
   void setLmBtm(BTreeUpperNode<B> * btmRoot) noexcept {
     lmBtm_ = btmRoot;
   }
@@ -310,6 +206,23 @@ public:
   }
 
 
+  void unroot() noexcept {
+    flags_ &= ~isRootBit;
+  }
+
+
+  void setParentRef(BTreeUpperNode<B> * newParent, uint8_t newIdxInSibling) noexcept {
+    this->parent_ = newParent;
+    this->idxInSibling_ = newIdxInSibling;
+  }
+
+
+  void setChildPtr(BTreeUpperNode * child, uint8_t idx) noexcept {
+    assert(idx < numChildren_);
+    children_[idx] = child;
+  }
+
+
   void makeNewRoot(BTreeUpperNode<B> * fstHalf, BTreeUpperNode<B> * sndHalf) {
     auto newRoot = new BTreeUpperNode<B>(false, true, fstHalf->getLmBtm());
     auto * parent = fstHalf->getParent();
@@ -323,6 +236,27 @@ public:
     }
     newRoot->pushbackUNode(fstHalf);
     newRoot->pushbackUNode(sndHalf);
+  }
+
+
+  //// public modifier
+public:
+  void pushbackUNode(BTreeUpperNode<B> * child) noexcept {
+    assert(numChildren_ < B);
+    children_[numChildren_] = child;
+    psum_[numChildren_] = (numChildren_ > 0) ?
+      psum_[numChildren_ - 1] + child->getSumOfWeight() : child->getSumOfWeight();
+    child->setParentRef(this, numChildren_);
+    ++numChildren_;
+  }
+
+
+  void pushbackBtm(BTreeUpperNode<B> * child, const uint64_t psumVal) noexcept {
+    assert(isBorder());
+    assert(numChildren_ < B);
+    children_[numChildren_] = child;
+    psum_[numChildren_] = psumVal;
+    ++numChildren_;
   }
 
 
@@ -357,7 +291,7 @@ public:
     if (!isRoot()) {
       parent_->handleSplitOfChild(newNode, idxInSibling_);
     } else {
-      flags_ &= ~isRootBit; // unroot
+      this->unroot();
       makeNewRoot(this, newNode);
     }
   }
@@ -392,7 +326,7 @@ public:
     if (!isRoot()) {
       parent_->handleSplitOfChild(newNode, idxInSibling_);
     } else {
-      flags_ &= ~isRootBit; // unroot
+      this->unroot();
       makeNewRoot(this, newNode);
     }
     return newNode;
@@ -406,6 +340,41 @@ public:
     if (parent_ != NULL) { // we do not use isRoot() here for convenience. That is, when we stack two or more BTrees, the change will be propagated.
       parent_->changePSumFrom(idxInSibling_, change);
     }
+  }
+
+
+  //// calculate statistics
+public:
+  size_t calcMemBytes() const noexcept {
+    size_t sumOfSize = sizeof(*this);
+    if (!isBorder()) {
+      for (uint8_t i = 0; i < numChildren_; ++i) {
+        sumOfSize += children_[i]->calcMemBytes();
+      }
+    }
+    return sumOfSize;
+  }
+
+
+  size_t calcNumUsed() const noexcept {
+    size_t numOfUsed = numChildren_;
+    if (!isBorder()) {
+      for (uint8_t i = 0; i < numChildren_; ++i) {
+        numOfUsed += children_[i]->calcNumUsed();
+      }
+    }
+    return numOfUsed;
+  }
+
+
+  size_t calcNumSlots() const noexcept {
+    size_t numOfSlots = B;
+    if (!isBorder()) {
+      for (uint8_t i = 0; i < numChildren_; ++i) {
+        numOfSlots += children_[i]->calcNumSlots();
+      }
+    }
+    return numOfSlots;
   }
 };
 

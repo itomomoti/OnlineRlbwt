@@ -152,137 +152,6 @@ public:
   }
 
 
-  ////
-  size_t calcMemBytesMTree() const noexcept {
-    return rootM_->calcMemBytes();
-  }
-
-
-  size_t calcMemBytesATree() const noexcept {
-    return rootA_->calcMemBytes();
-  }
-
-
-  size_t calcMemBytesSTree() const noexcept {
-    size_t size = 0;
-    for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
-         rootS = getNextRootS(rootS)) {
-      size += rootS->calcMemBytes();
-    }
-    return size;
-  }
-
-
-  size_t calcMemBytesWeightArrays() const noexcept {
-    size_t size = 0;
-    for (uint64_t i = 0; i < idxM2S_.size() / B; ++i) {
-      size += weightArrayVec_[i]->calcMemBytes();
-    }
-    return size;
-  }
-
-
-  size_t calcMemBytesIdxConvertArrays() const noexcept {
-    size_t size = 0;
-    size += idxM2S_.calcMemBytes();
-    size += idxS2M_.calcMemBytes();
-    return size;
-  }
-
-
-  size_t calcMemBytesBtmArrays() const noexcept {
-    return (idxM2S_.capacity() / B) * (sizeof(parentM_[0]) + sizeof(parentS_[0]) +
-                                       sizeof(labelM_[0]) + sizeof(charS_[0]) +
-                                       sizeof(idxInSiblingM_[0]) + sizeof(idxInSiblingS_[0]) +
-                                       sizeof(numChildrenS_[0]) + sizeof(weightArrayVec_[0]));
-  }
-
-
-  size_t calcMemBytes() const noexcept {
-    size_t size = sizeof(*this);
-    size += calcMemBytesMTree();
-    size += calcMemBytesATree();
-    size += calcMemBytesSTree();
-    size += calcMemBytesWeightArrays();
-    size += calcMemBytesIdxConvertArrays();
-    size -= sizeof(idxM2S_); // minus double counted part
-    size -= sizeof(idxS2M_); // minus double counted part
-    size += calcMemBytesBtmArrays();
-    return size;
-  }
-
-
-  size_t calcNumUsedSTree() const noexcept {
-    size_t numUsed = 0;
-    for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
-         rootS = getNextRootS(rootS)) {
-      numUsed += rootS->calcNumUsed();
-    }
-    return numUsed;
-  }
-
-
-  size_t calcNumSlotsSTree() const noexcept {
-    size_t numSlots = 0;
-    for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
-         rootS = getNextRootS(rootS)) {
-      numSlots += rootS->calcNumSlots();
-    }
-    return numSlots;
-  }
-
-
-  size_t calcNumRuns() const noexcept {
-    size_t numRuns = 0;
-    for (size_t i = 0; i < idxM2S_.size() / B; ++i) {
-      numRuns += getNumChildrenM(i);
-    }
-    return numRuns - 1; // -1 due to the first dummy
-  }
-
-
-  size_t calcNumAlph() const noexcept {
-    size_t numAlph = 0;
-    for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
-         rootS = getNextRootS(rootS)) {
-      ++numAlph;
-    }
-    return numAlph;
-  }
-
-
-  void printStatictics(std::ostream & os) const noexcept {
-    const size_t totalLen = getSumOfWeight();
-    const size_t numRuns = calcNumRuns();
-    os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph() << ", BTree arity param B = " << static_cast<int>(B) << std::endl;
-    os << "Total: " << calcMemBytes() << " bytes" << std::endl;
-    os << "MTree: " << calcMemBytesMTree() << " bytes, OccuRate = " << ((rootM_->calcNumSlots()) ? 100.0 * rootM_->calcNumUsed() / rootM_->calcNumSlots() : 0)
-       << " (= 100*" << rootM_->calcNumUsed() << "/" << rootM_->calcNumSlots() << ")" << std::endl;
-    os << "ATree: " << calcMemBytesATree() << " bytes, OccuRate = " << ((rootA_->calcNumSlots()) ? 100.0 * rootA_->calcNumUsed() / rootA_->calcNumSlots() : 0)
-       << " (= 100*" << rootA_->calcNumUsed() << "/" << rootA_->calcNumSlots() << ")" << std::endl;
-    os << "STree: " << calcMemBytesSTree() << " bytes, OccuRate = " << ((calcNumSlotsSTree()) ? 100.0 * calcNumUsedSTree() / calcNumSlotsSTree() : 0)
-       << " (= 100*" << calcNumUsedSTree() << "/" << calcNumSlotsSTree() << ")" << std::endl;
-    os << "IdxConverArrays: " << calcMemBytesIdxConvertArrays() << " bytes ~ "
-       << "(2*" << static_cast<int>(idxM2S_.getW()) << "(bitwidth)*" << idxM2S_.capacity() << "(capacity each))/8, "
-       << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * 2 * numRuns / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
-       << " (= 100*2*" << numRuns << "/" << (idxM2S_.capacity() + idxS2M_.capacity()) << ")" << std::endl;
-    os << "WeightArrays: " << calcMemBytesWeightArrays() << " bytes" << std::endl;
-    os << "BtmArrays: " << calcMemBytesBtmArrays() << " bytes, "
-       << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * (idxM2S_.size() + idxS2M_.size()) / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
-       << " (= 100*" << (idxM2S_.size() + idxS2M_.size())/B << "/" << (idxM2S_.capacity() + idxS2M_.capacity())/B << "), "
-       << "OccuRate (btmM) = " << ((idxM2S_.capacity()) ? 100.0 * idxM2S_.size() / idxM2S_.capacity() : 0)
-       << " (= 100*" << idxM2S_.size()/B << "/" << idxM2S_.capacity()/B << "), "
-       << "OccuRate (btmS) = " << ((idxS2M_.capacity()) ? 100.0 * idxS2M_.size() / idxS2M_.capacity() : 0)
-       << " (= 100*" << idxS2M_.size()/B << "/" << idxS2M_.capacity()/B << ")" << std::endl;
-  }
-
-
-public:
-  //// public interface
   uint64_t getWeightFromIdxM(uint64_t idxM) const noexcept {
     return weightArrayVec_[idxM / B]->read(idxM % B);
   }
@@ -380,61 +249,8 @@ public:
   }
 
 
-  void printDebugInfo(std::ostream & os) const noexcept {
-    {
-      uint64_t pos = 0;
-      for (auto idxM = searchPosM(pos); idxM != BTreeUpperNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
-        os << "(" << idxM << ":" << getCharFromIdxM(idxM) << "^" << getWeightFromIdxM(idxM) << ") ";
-      }
-      os << std::endl;
-    }
-
-    {
-      const uint64_t numBtmM = idxM2S_.size() / B;
-      os << "information on M" << std::endl;
-      for (uint64_t i = 0; i < numBtmM; ++i) {
-        const auto nextBtmM = getNextBtmM(i);
-        os << "[" << i*B << "-" << (i+1)*B-1 << "] (num=" << (int)getNumChildrenM(i) << " lbl=" 
-                  << labelM_[i] << " par=" << parentM_[i] << " sib=" << (int)idxInSiblingM_[i] << ") "
-                  << "=> " << nextBtmM * B << std::endl;
-        for (uint64_t j = 0; j < B; ++j) {
-          if (j < getNumChildrenM(i) && B*i+j != idxS2M_.read(idxM2S_.read(B*i+j))) {
-            os << "!!"; // WARNING, links are not maintained correctly
-          }
-          os << idxM2S_.read(B*i+j) << "(" << getWeightFromIdxM(B*i+j) << ")  ";
-        }
-        os << std::endl;
-      }
-    }
-
-    {
-      const uint64_t numBtmS = idxS2M_.size() / B;
-      os << "information on S" << std::endl;
-      for (uint64_t i = 0; i < numBtmS; ++i) {
-        const auto nextIdxS = getNextIdxS(i*B + numChildrenS_[i] - 1);
-        os << "[" << i*B << "-" << (i+1)*B-1 << "] (num=" << (int)numChildrenS_[i] << " ch=" << charS_[i] << " par=" 
-                  << parentS_[i] << " sib=" << (int)idxInSiblingS_[i] << ") "
-                  << "=> " << nextIdxS << std::endl;
-        for (uint64_t j = 0; j < B; ++j) {
-          os << idxS2M_.read(B*i+j) << "  ";
-        }
-        os << std::endl;
-      }
-    }
-
-    os << "Alphabet: " << std::endl;
-    for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
-         rootS = getNextRootS(rootS)) {
-      const uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm());
-      os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight() << ") ";
-    }
-    os << std::endl;
-  }
-
-
-public:
   //// public search functions
+public:
   /**
      Return pointer ('idxM') to the run containing 'sum'-th character (0base) in RLE.
      sum is modified to be the relative position (0base) from the beginning of the run.
@@ -481,8 +297,8 @@ public:
   }
 
 
-private:
   //// private search functions
+private:
   uint64_t searchPosS(uint64_t & pos, const BTreeUpperNode<B> * rootS) const noexcept {
     // check this outside
     // if (pos >= rootS->getSumOfWeight()) {
@@ -539,8 +355,8 @@ private:
   }
 
 
+  //// iterator like functions
 public:
-  //// iterator like function
   uint64_t getPrevIdxM(const uint64_t idxM) const noexcept {
     if (idxM % B) {
       return idxM - 1;
@@ -619,8 +435,8 @@ private:
   }
 
 
+  //// private getter functions (utilities)
 private:
-  //// private getter function (utilities)
   uint8_t getNumChildrenM(const uint64_t btmM) const noexcept {
     return weightArrayVec_[btmM]->size();
   }
@@ -1020,6 +836,189 @@ public:
   void insertRunWithoutReturn(const uint64_t ch, const uint64_t weight, const uint64_t pos) {
     auto tmp = pos;
     insertRun(ch, weight, tmp);
+  }
+
+
+  //// statistics
+public:
+  size_t calcMemBytesMTree() const noexcept {
+    return rootM_->calcMemBytes();
+  }
+
+
+  size_t calcMemBytesATree() const noexcept {
+    return rootA_->calcMemBytes();
+  }
+
+
+  size_t calcMemBytesSTree() const noexcept {
+    size_t size = 0;
+    for (const auto * rootS = getFstRootS();
+         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         rootS = getNextRootS(rootS)) {
+      size += rootS->calcMemBytes();
+    }
+    return size;
+  }
+
+
+  size_t calcMemBytesWeightArrays() const noexcept {
+    size_t size = 0;
+    for (uint64_t i = 0; i < idxM2S_.size() / B; ++i) {
+      size += weightArrayVec_[i]->calcMemBytes();
+    }
+    return size;
+  }
+
+
+  size_t calcMemBytesIdxConvertArrays() const noexcept {
+    size_t size = 0;
+    size += idxM2S_.calcMemBytes();
+    size += idxS2M_.calcMemBytes();
+    return size;
+  }
+
+
+  size_t calcMemBytesBtmArrays() const noexcept {
+    return (idxM2S_.capacity() / B) * (sizeof(parentM_[0]) + sizeof(parentS_[0]) +
+                                       sizeof(labelM_[0]) + sizeof(charS_[0]) +
+                                       sizeof(idxInSiblingM_[0]) + sizeof(idxInSiblingS_[0]) +
+                                       sizeof(numChildrenS_[0]) + sizeof(weightArrayVec_[0]));
+  }
+
+
+  size_t calcMemBytes() const noexcept {
+    size_t size = sizeof(*this);
+    size += calcMemBytesMTree();
+    size += calcMemBytesATree();
+    size += calcMemBytesSTree();
+    size += calcMemBytesWeightArrays();
+    size += calcMemBytesIdxConvertArrays();
+    size -= sizeof(idxM2S_); // minus double counted part
+    size -= sizeof(idxS2M_); // minus double counted part
+    size += calcMemBytesBtmArrays();
+    return size;
+  }
+
+
+  size_t calcNumUsedSTree() const noexcept {
+    size_t numUsed = 0;
+    for (const auto * rootS = getFstRootS();
+         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         rootS = getNextRootS(rootS)) {
+      numUsed += rootS->calcNumUsed();
+    }
+    return numUsed;
+  }
+
+
+  size_t calcNumSlotsSTree() const noexcept {
+    size_t numSlots = 0;
+    for (const auto * rootS = getFstRootS();
+         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         rootS = getNextRootS(rootS)) {
+      numSlots += rootS->calcNumSlots();
+    }
+    return numSlots;
+  }
+
+
+  size_t calcNumRuns() const noexcept {
+    size_t numRuns = 0;
+    for (size_t i = 0; i < idxM2S_.size() / B; ++i) {
+      numRuns += getNumChildrenM(i);
+    }
+    return numRuns - 1; // -1 due to the first dummy
+  }
+
+
+  size_t calcNumAlph() const noexcept {
+    size_t numAlph = 0;
+    for (const auto * rootS = getFstRootS();
+         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         rootS = getNextRootS(rootS)) {
+      ++numAlph;
+    }
+    return numAlph;
+  }
+
+
+  void printStatictics(std::ostream & os) const noexcept {
+    const size_t totalLen = getSumOfWeight();
+    const size_t numRuns = calcNumRuns();
+    os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph() << ", BTree arity param B = " << static_cast<int>(B) << std::endl;
+    os << "Total: " << calcMemBytes() << " bytes" << std::endl;
+    os << "MTree: " << calcMemBytesMTree() << " bytes, OccuRate = " << ((rootM_->calcNumSlots()) ? 100.0 * rootM_->calcNumUsed() / rootM_->calcNumSlots() : 0)
+       << " (= 100*" << rootM_->calcNumUsed() << "/" << rootM_->calcNumSlots() << ")" << std::endl;
+    os << "ATree: " << calcMemBytesATree() << " bytes, OccuRate = " << ((rootA_->calcNumSlots()) ? 100.0 * rootA_->calcNumUsed() / rootA_->calcNumSlots() : 0)
+       << " (= 100*" << rootA_->calcNumUsed() << "/" << rootA_->calcNumSlots() << ")" << std::endl;
+    os << "STree: " << calcMemBytesSTree() << " bytes, OccuRate = " << ((calcNumSlotsSTree()) ? 100.0 * calcNumUsedSTree() / calcNumSlotsSTree() : 0)
+       << " (= 100*" << calcNumUsedSTree() << "/" << calcNumSlotsSTree() << ")" << std::endl;
+    os << "IdxConverArrays: " << calcMemBytesIdxConvertArrays() << " bytes ~ "
+       << "(2*" << static_cast<int>(idxM2S_.getW()) << "(bitwidth)*" << idxM2S_.capacity() << "(capacity each))/8, "
+       << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * 2 * numRuns / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
+       << " (= 100*2*" << numRuns << "/" << (idxM2S_.capacity() + idxS2M_.capacity()) << ")" << std::endl;
+    os << "WeightArrays: " << calcMemBytesWeightArrays() << " bytes" << std::endl;
+    os << "BtmArrays: " << calcMemBytesBtmArrays() << " bytes, "
+       << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * (idxM2S_.size() + idxS2M_.size()) / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
+       << " (= 100*" << (idxM2S_.size() + idxS2M_.size())/B << "/" << (idxM2S_.capacity() + idxS2M_.capacity())/B << "), "
+       << "OccuRate (btmM) = " << ((idxM2S_.capacity()) ? 100.0 * idxM2S_.size() / idxM2S_.capacity() : 0)
+       << " (= 100*" << idxM2S_.size()/B << "/" << idxM2S_.capacity()/B << "), "
+       << "OccuRate (btmS) = " << ((idxS2M_.capacity()) ? 100.0 * idxS2M_.size() / idxS2M_.capacity() : 0)
+       << " (= 100*" << idxS2M_.size()/B << "/" << idxS2M_.capacity()/B << ")" << std::endl;
+  }
+
+
+  void printDebugInfo(std::ostream & os) const noexcept {
+    {
+      uint64_t pos = 0;
+      for (auto idxM = searchPosM(pos); idxM != BTreeUpperNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
+        os << "(" << idxM << ":" << getCharFromIdxM(idxM) << "^" << getWeightFromIdxM(idxM) << ") ";
+      }
+      os << std::endl;
+    }
+
+    {
+      const uint64_t numBtmM = idxM2S_.size() / B;
+      os << "information on M" << std::endl;
+      for (uint64_t i = 0; i < numBtmM; ++i) {
+        const auto nextBtmM = getNextBtmM(i);
+        os << "[" << i*B << "-" << (i+1)*B-1 << "] (num=" << (int)getNumChildrenM(i) << " lbl=" 
+                  << labelM_[i] << " par=" << parentM_[i] << " sib=" << (int)idxInSiblingM_[i] << ") "
+                  << "=> " << nextBtmM * B << std::endl;
+        for (uint64_t j = 0; j < B; ++j) {
+          if (j < getNumChildrenM(i) && B*i+j != idxS2M_.read(idxM2S_.read(B*i+j))) {
+            os << "!!"; // WARNING, links are not maintained correctly
+          }
+          os << idxM2S_.read(B*i+j) << "(" << getWeightFromIdxM(B*i+j) << ")  ";
+        }
+        os << std::endl;
+      }
+    }
+
+    {
+      const uint64_t numBtmS = idxS2M_.size() / B;
+      os << "information on S" << std::endl;
+      for (uint64_t i = 0; i < numBtmS; ++i) {
+        const auto nextIdxS = getNextIdxS(i*B + numChildrenS_[i] - 1);
+        os << "[" << i*B << "-" << (i+1)*B-1 << "] (num=" << (int)numChildrenS_[i] << " ch=" << charS_[i] << " par=" 
+                  << parentS_[i] << " sib=" << (int)idxInSiblingS_[i] << ") "
+                  << "=> " << nextIdxS << std::endl;
+        for (uint64_t j = 0; j < B; ++j) {
+          os << idxS2M_.read(B*i+j) << "  ";
+        }
+        os << std::endl;
+      }
+    }
+
+    os << "Alphabet: " << std::endl;
+    for (const auto * rootS = getFstRootS();
+         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         rootS = getNextRootS(rootS)) {
+      const uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm());
+      os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight() << ") ";
+    }
+    os << std::endl;
   }
 };
 
