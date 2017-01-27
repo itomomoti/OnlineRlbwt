@@ -21,8 +21,11 @@
 #include "../../Basics/MemUtil.hpp"
 #include "BTree.hpp"
 
-#define XT 1.2  //ラベル振り直しの基準値
+#define XT 1.5  //ラベル振り直しの基準値
 #define X 20
+uint64_t numRelabel = 0;
+uint64_t numInRelabel = 0;
+
 
 template <uint8_t B> class BTreeUpperNode;
 
@@ -46,6 +49,7 @@ class DynRLE
   uint8_t * idxInSiblingS_;
   uint8_t * numChildrenS_;
 
+  // uint8_t labelingParam_;
 
 public:
   DynRLE() :
@@ -61,6 +65,7 @@ public:
     charS_(NULL),
     idxInSiblingS_(NULL),
     numChildrenS_(NULL)
+    // labelingParam_(0)
   {}
 
 
@@ -540,6 +545,7 @@ private:
       labelM_[btmM] = (labelM_[prev] + labelM_[next]) / 2;
       return;
     }
+    ++numInRelabel; // 4test
 
     double criterion = 1;
     uint64_t criterionLabel = labelM_[next];
@@ -562,7 +568,8 @@ private:
         next = getNextBtmM(next);
       }
     } while (criterion <= num);
-        
+
+    numRelabel += num; // 4test
     // relable num labels
     uint64_t tLabel = criterionLabel << l;
     uint64_t interval = (1ULL << l) / num;
@@ -966,6 +973,8 @@ public:
        << " (= 100*" << idxM2S_.size()/B << "/" << idxM2S_.capacity()/B << "), "
        << "OccuRate (btmS) = " << ((idxS2M_.capacity()) ? 100.0 * idxS2M_.size() / idxS2M_.capacity() : 0)
        << " (= 100*" << idxS2M_.size()/B << "/" << idxS2M_.capacity()/B << ")" << std::endl;
+    // 4test
+    os << "numInRelabel = " << numInRelabel << ", numRelabel = " << numRelabel << ", ratio = " << 1.0 * numRelabel / numInRelabel << std::endl;
   }
 
 
