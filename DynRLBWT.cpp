@@ -10,16 +10,10 @@
 #include "DynRLBWT.hpp"
 
 
-#define MYDEBUG
-#ifdef MYDEBUG
-#define debugstream1 std::cout
-#define debugstream2 std::cerr
-#endif
-
 //
-// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mavx -c ../../Basics/BitsUtil.cpp
-// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mavx -o DynRLE.out DynRLE.cpp ../../Basics/BitsUtil.o
-// $ ./DynRLE.out -n 1000 -r 28
+// $ g++ -std=c++14 -march=native -O3 -DNDEBUG -W -Wall -Wno-deprecated -c ../../Basics/BitsUtil.cpp
+// $ g++ -std=c++14 -march=native -O3 -DNDEBUG -W -Wall -Wno-deprecated -o DynRLBWT.out DynRLE.cpp ../../Basics/BitsUtil.o DynRLE.o
+// $ ./DynRLBWT.out -i inputfilename -o outputfilename
 //
 int main(int argc, char *argv[])
 {
@@ -35,7 +29,7 @@ int main(int argc, char *argv[])
   auto t1 = std::chrono::high_resolution_clock::now();
 
 	std::ifstream ifs(in);
-	std::ofstream os(out);
+	std::ofstream ofs(out);
 
   size_t j = 0;
   const size_t step = 1000000;	//print status every step characters
@@ -56,33 +50,33 @@ int main(int argc, char *argv[])
       rlbwt.extend(uint8_t(c));
       ++j;
     }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
+    std::cout << "construct done. " << sec << " sec" << std::endl;
+    rlbwt.printStatictics(std::cout);
   }
+
 
   // { // 
   //   for (size_t i = 0; i < rlbwt.getLenWithTerminator(); ++i) {
   //     uint64_t pos = i;
   //     uint64_t idxM = rlbwt.searchPosM(pos);
   //     char c = rlbwt.getCharFromIdxM(idxM);
-  //     os.put(c);
+  //     ofs.put(c);
   //   }
   // }
 
   { // inverse
-    uint64_t pos = 0;
-    for (size_t i = 0; i < rlbwt.getLenWithEm() - 1; ++i) {
-      uint64_t ch64 = rlbwt[pos];
-      os.put(char(ch64));
-      pos = rlbwt.totalRank(uint8_t(ch64), pos);
-    }
+    rlbwt.invert(ofs);
   }
 
   auto t2 = std::chrono::high_resolution_clock::now();
 
 	ifs.close();
-	os.close();
+	ofs.close();
 
   double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
-  std::cout << "done. " << sec << " sec" << std::endl;
+  std::cout << "construct and string inversion done. " << sec << " sec" << std::endl;
   rlbwt.printStatictics(std::cout);
 
 	size_t bitsize = rlbwt.calcMemBytes() * 8;

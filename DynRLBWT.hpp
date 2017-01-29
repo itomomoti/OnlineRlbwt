@@ -1,17 +1,23 @@
+/**
+ * @file DynRLBWT.hpp
+ * @brief Online RLBWT.
+ * @author Tomohiro I
+ * @date 2017-01-29
+ */
 #ifndef INCLUDE_GUARD_DynRLBWT
 #define INCLUDE_GUARD_DynRLBWT
 
 #include <stdint.h>
 #include <ostream>
+#include <fstream>
 
 
 /*
- * In contrast to DynRLE, DynRLWT has a vertial end mark at insertPos_
+ * In contrast to DynRLE, DynRLWT has a vertial end marker (em_) at emPos_
 */
 template <class DynRLE>
 class DynRLBWT
 {
-  // mixed tree
   DynRLE drle_;
   uint64_t emPos_;
   uint64_t em_; // end marker
@@ -74,6 +80,20 @@ public:
 
   size_t calcMemBytes() const noexcept {
     return sizeof(*this) + drle_.calcMemBytes();
+  }
+
+
+  void invert(std::ofstream & ofs) const noexcept {
+    uint64_t pos = 0;
+    for (uint64_t i = 0; i < this->getLenWithEm() - 1; ++i) {
+      if (pos > emPos_) {
+        --pos;
+      }
+      const uint64_t idxM = drle_.searchPosM(pos);
+      const unsigned char ch = drle_.getCharFromIdxM(idxM);
+      ofs.put(ch);
+      pos = drle_.rank(ch, idxM, pos, true);
+    }
   }
 };
 
