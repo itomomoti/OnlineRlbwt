@@ -1,6 +1,5 @@
 /**
  * @file BTree.hpp
- * @brief
  * @author Tomohiro I
  * @date 2017-01-26
  */
@@ -13,17 +12,15 @@
 
 
 template <uint8_t B = 64> // B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B
-class BTreeUpperNode
+class BTreeNode
 {
-  //  friend BTreeUpperNode<B>;
-
   uint64_t psum_[B]; // partial sum: psum_[i] = sum_{i = 0}^{i} [weight of i-th child (0base)]
-  BTreeUpperNode<B> * parent_;
+  BTreeNode<B> * parent_;
   uint8_t idxInSibling_; // this node is the 'idxInSibling_'-th child (0base) of its parent
   uint8_t numChildren_;
   uint8_t flags_;
-  BTreeUpperNode<B> * children_[B];
-  BTreeUpperNode<B> * lmBtm_;
+  BTreeNode<B> * children_[B];
+  BTreeNode<B> * lmBtm_;
 
   enum { // for 'flags_'
     isBorderBit = 1,
@@ -37,15 +34,15 @@ public:
   };
 
 public:
-  BTreeUpperNode<B>(bool isBorder, bool isRoot, BTreeUpperNode<B> * lmBtm, bool isDummy = false)
+  BTreeNode<B>(bool isBorder, bool isRoot, BTreeNode<B> * lmBtm, bool isDummy = false)
   : parent_(NULL),
     numChildren_(0),
     flags_(isBorder * isBorderBit | isRoot * isRootBit | isDummy * isDummyBit),
     lmBtm_(lmBtm)
   {}
-  ~BTreeUpperNode<B>() = default;
-  BTreeUpperNode<B>(const BTreeUpperNode<B> &) = delete;
-  BTreeUpperNode<B> & operator=(const BTreeUpperNode<B> &) = delete;
+  ~BTreeNode<B>() = default;
+  BTreeNode<B>(const BTreeNode<B> &) = delete;
+  BTreeNode<B> & operator=(const BTreeNode<B> &) = delete;
 
 
   //// simple getter
@@ -68,12 +65,12 @@ public:
   }
 
 
-  BTreeUpperNode<B> * getChildPtr(uint8_t i) const noexcept {
+  BTreeNode<B> * getChildPtr(uint8_t i) const noexcept {
     return children_[i];
   }
 
 
-  BTreeUpperNode<B> * getParent() const noexcept {
+  BTreeNode<B> * getParent() const noexcept {
     return parent_;
   }
 
@@ -104,12 +101,12 @@ public:
 
 
   //// function to traverse tree
-  BTreeUpperNode<B> * getLmBtm() const noexcept {
+  BTreeNode<B> * getLmBtm() const noexcept {
     return lmBtm_;
   }
 
 
-  BTreeUpperNode<B> * getRmBtm() const noexcept {
+  BTreeNode<B> * getRmBtm() const noexcept {
     const auto * node = this;
     while (!(node->isBorder())) {
       node = node->children_[node->getNumChildren() - 1];
@@ -118,7 +115,7 @@ public:
   }
 
 
-  BTreeUpperNode<B> * getNextBtm(uint8_t idxInSib) const noexcept {
+  BTreeNode<B> * getNextBtm(uint8_t idxInSib) const noexcept {
     const auto * node = this;
     while (idxInSib + 1 == node->getNumChildren() && !(node->isRoot())) {
       idxInSib = node->getIdxInSibling();
@@ -131,11 +128,11 @@ public:
         return node->getChildPtr(idxInSib + 1)->getLmBtm();
       }
     }
-    return reinterpret_cast<BTreeUpperNode<B> *>(NOTFOUND);
+    return reinterpret_cast<BTreeNode<B> *>(NOTFOUND);
   }
 
 
-  BTreeUpperNode<B> * getPrevBtm(uint8_t idxInSib) const noexcept {
+  BTreeNode<B> * getPrevBtm(uint8_t idxInSib) const noexcept {
     const auto * node = this;
     while (idxInSib == 0 && !(node->isRoot())) {
       idxInSib = node->getIdxInSibling();
@@ -148,13 +145,11 @@ public:
         return node->getChildPtr(idxInSib - 1)->getRmBtm();
       }
     }
-    return reinterpret_cast<BTreeUpperNode<B> *>(NOTFOUND);
+    return reinterpret_cast<BTreeNode<B> *>(NOTFOUND);
   }
 
 
   /**
-   * @fn
-   * 
    * @param calcTotalPSum stopping criteria: If false, goes up until node 'isRoot() == true'. If true, goes up until node with 'parent_ == NULL' (convenient when BTrees are stacked).
    * @return partial sum up to the node (exclusive) indicated by idx-th child (0base) of this node
    */
@@ -174,7 +169,7 @@ public:
 
 
   ////
-  BTreeUpperNode<B> * searchPos(uint64_t & pos) const noexcept {
+  BTreeNode<B> * searchPos(uint64_t & pos) const noexcept {
     const auto * ptr = std::upper_bound(psum_, psum_ + numChildren_, pos);
     const uint8_t i = ptr - psum_;
     if (i) {
@@ -187,14 +182,14 @@ public:
   }
 
 
-  //// private modifier (intend to call from member function of BTreeUpperNode)
+  //// private modifier (intend to call from member function of BTreeNode)
 private:
-  void setLmBtm(BTreeUpperNode<B> * btmRoot) noexcept {
+  void setLmBtm(BTreeNode<B> * btmRoot) noexcept {
     lmBtm_ = btmRoot;
   }
 
 
-  void updateLmBtm(BTreeUpperNode<B> * btmRoot) noexcept {
+  void updateLmBtm(BTreeNode<B> * btmRoot) noexcept {
     auto * node = this;
     while (true) {
       node->setLmBtm(btmRoot);
@@ -211,20 +206,20 @@ private:
   }
 
 
-  void setParentRef(BTreeUpperNode<B> * newParent, uint8_t newIdxInSibling) noexcept {
+  void setParentRef(BTreeNode<B> * newParent, uint8_t newIdxInSibling) noexcept {
     this->parent_ = newParent;
     this->idxInSibling_ = newIdxInSibling;
   }
 
 
-  void setChildPtr(BTreeUpperNode * child, uint8_t idx) noexcept {
+  void setChildPtr(BTreeNode * child, uint8_t idx) noexcept {
     assert(idx < numChildren_);
     children_[idx] = child;
   }
 
 
-  void makeNewRoot(BTreeUpperNode<B> * fstHalf, BTreeUpperNode<B> * sndHalf) {
-    auto newRoot = new BTreeUpperNode<B>(false, true, fstHalf->getLmBtm());
+  void makeNewRoot(BTreeNode<B> * fstHalf, BTreeNode<B> * sndHalf) {
+    auto newRoot = new BTreeNode<B>(false, true, fstHalf->getLmBtm());
     auto * parent = fstHalf->getParent();
     if (parent != NULL) { // BTrees are stacked
       const auto idxInSib = fstHalf->getIdxInSibling();
@@ -241,7 +236,7 @@ private:
 
   //// public modifier
 public:
-  void pushbackUNode(BTreeUpperNode<B> * child) noexcept {
+  void pushbackUNode(BTreeNode<B> * child) noexcept {
     assert(numChildren_ < B);
     children_[numChildren_] = child;
     psum_[numChildren_] = (numChildren_ > 0) ?
@@ -251,7 +246,7 @@ public:
   }
 
 
-  void pushbackBtm(BTreeUpperNode<B> * child, const uint64_t psumVal) noexcept {
+  void pushbackBtm(BTreeNode<B> * child, const uint64_t psumVal) noexcept {
     assert(isBorder());
     assert(numChildren_ < B);
     children_[numChildren_] = child;
@@ -261,8 +256,8 @@ public:
 
 
   //// 'children_[idx]' is split to 'children_[idx]' and 'sndHalf'
-  void handleSplitOfChild(BTreeUpperNode<B> * sndHalf, const uint8_t idx) {
-    // assert(!isBorder()); // If node is on border and a child is not treated as BTreeUpperNode<B> type, it should be processed differently
+  void handleSplitOfChild(BTreeNode<B> * sndHalf, const uint8_t idx) {
+    // assert(!isBorder()); // If node is on border and a child is not treated as BTreeNode<B> type, it should be processed differently
     const auto end = numChildren_;
     assert(idx <= end);
     if (end < B) {
@@ -278,7 +273,7 @@ public:
     }
     // this node has to be split
     auto * lmBtm = (this->isBorder()) ? children_[B/2] : children_[B/2]->getLmBtm();
-    auto newNode = new BTreeUpperNode<B>(this->isBorder(), false, lmBtm);
+    auto newNode = new BTreeNode<B>(this->isBorder(), false, lmBtm);
     for (uint8_t i = B/2; i < B; ++i) {
       newNode->pushbackUNode(children_[i]);
     }
@@ -297,7 +292,7 @@ public:
   }
 
 
-  BTreeUpperNode<B> * handleSplitOfBtm(BTreeUpperNode<B> * sndHalf, const uint64_t weight, const uint8_t idx) {
+  BTreeNode<B> * handleSplitOfBtm(BTreeNode<B> * sndHalf, const uint64_t weight, const uint8_t idx) {
     assert(isBorder());
     assert(idx <= numChildren_);
     if (numChildren_ < B) {
@@ -312,7 +307,7 @@ public:
       return NULL;
     }
     // this node has to be split
-    auto newNode = new BTreeUpperNode(true, false, children_[B/2]);
+    auto newNode = new BTreeNode(true, false, children_[B/2]);
     const auto minus = psum_[B/2 - 1];
     for (uint8_t i = B/2; i < B; ++i) {
       newNode->pushbackBtm(children_[i], psum_[i] - minus);
