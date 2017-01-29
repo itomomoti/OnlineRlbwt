@@ -1,6 +1,17 @@
 #include "DynRLE.hpp"
 
 
+const uint64_t TagRelabelAlgo::TBL_Capacities[] = {
+  9755,
+  4281003,
+  1196954387,
+  301970036317,
+  35278131863618,
+  3480544397494665,
+  216999516552746648,
+};
+
+
 // #define TEST_CORRECT_RANDOM_
 #ifdef TEST_CORRECT_RANDOM_
 #include <time.h>
@@ -10,8 +21,8 @@
 #include "cmdline.h"
 
 //
-// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mavx -c ../../BitsUtil.cpp
-// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mavx -o DynRLE.out DynRLE.cpp ../../Basics/BitsUtil.o
+// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mnative -c ../../BitsUtil.cpp
+// $ g++ -O3 -DNDEBUG -Wall -std=c++14 -mnative -o DynRLE.out DynRLE.cpp ../../Basics/BitsUtil.o
 // $ ./DynRLE.out -n 1000 -r 28
 //
 int main(int argc, char *argv[])

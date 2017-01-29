@@ -17,39 +17,58 @@
 #include <sstream>
 
 #include "../../Basics/BitsUtil.hpp"
-#include "../../Basics/WBitsArray.hpp"
+#include "../../Basics/WBitsVec.hpp"
 #include "../../Basics/MemUtil.hpp"
 #include "BTree.hpp"
 
-#define XT 1.5  //ラベル振り直しの基準値
-#define X 20
-uint64_t numRelabel = 0;
-uint64_t numInRelabel = 0;
+struct TagRelabelAlgo
+{
+  TagRelabelAlgo() = delete;
+
+  static constexpr uint8_t NUM_TRACODE{7};
+  static constexpr uint64_t MAX_LABEL{ctcbits::UINTW_MAX(63)};
+  static const uint64_t TBL_Capacities[NUM_TRACODE];
+
+  static uint8_t getSmallestTraCode(uint64_t num) noexcept {
+    assert(TBL_Capacities[NUM_TRACODE-1] >= num);
+
+    uint8_t i = 0;
+    while (TBL_Capacities[i] < num) {
+      ++i;
+    }
+    return i + 9;
+  }
+
+  static uint64_t getNextOverflowNum(uint64_t overflowNum, uint8_t traCode) noexcept {
+    return ((overflowNum * traCode) >> 3) + 1;
+  }
+};
 
 
-template <uint8_t B> class BTreeUpperNode;
+template <uint8_t B> class BTreeNode;
 
 template <uint8_t B = 64> // B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B
 class DynRLE
 {
   // mixed tree
-  BTreeUpperNode<B> * rootM_;
+  BTreeNode<B> * rootM_;
   // information for leaves and elements for mixed tree
-  WBitsArray idxM2S_;
-  BTreeUpperNode<B> ** parentM_;
+  WBitsVec idxM2S_;
+  BTreeNode<B> ** parentM_;
   uint64_t * labelM_;
   uint8_t * idxInSiblingM_;
-  WBitsArray ** weightArrayVec_;
+  WBitsVec ** weightVecs_;
   // alphabet tree: the bottoms of alphabet tree are roots of separated trees
-  BTreeUpperNode<B> * rootA_;
+  BTreeNode<B> * rootA_;
   // information for leaves and elements for separated tree
-  WBitsArray idxS2M_;
-  BTreeUpperNode<B> ** parentS_;
+  WBitsVec idxS2M_;
+  BTreeNode<B> ** parentS_;
   uint64_t * charS_;
   uint8_t * idxInSiblingS_;
   uint8_t * numChildrenS_;
 
-  // uint8_t labelingParam_;
+  // uint8_t reasgnParam_; // reasgnParam_ is set to be the smallest uint in [9..16) such that (reasgnParam_/8)^64 > (max of elements in list)
+  uint8_t traCode_; // traCode in [9..16)
 
 public:
   DynRLE() :
@@ -58,14 +77,14 @@ public:
     parentM_(NULL),
     labelM_(NULL),
     idxInSiblingM_(NULL),
-    weightArrayVec_(NULL),
+    weightVecs_(NULL),
     rootA_(NULL),
     idxS2M_(),
     parentS_(NULL),
     charS_(NULL),
     idxInSiblingS_(NULL),
-    numChildrenS_(NULL)
-    // labelingParam_(0)
+    numChildrenS_(NULL),
+    traCode_(9)
   {}
 
 
@@ -86,21 +105,21 @@ public:
     }
     reserveBtms(initNumBtms);
 
-    rootM_ = new BTreeUpperNode<B>(true, true, reinterpret_cast<BTreeUpperNode<B> *>(0));
+    rootM_ = new BTreeNode<B>(true, true, reinterpret_cast<BTreeNode<B> *>(0));
     // sentinel
     parentM_[0] = rootM_;
     idxInSiblingM_[0] = 0;
     labelM_[0] = 0;
     idxM2S_.resize(B);
     idxM2S_.write(0, 0); // sentinel: should not be used
-    weightArrayVec_[0] = new WBitsArray(8, B);
-    weightArrayVec_[0]->resize(1);
-    weightArrayVec_[0]->write(0, 0);
-    rootM_->pushbackBtm(reinterpret_cast<BTreeUpperNode<B> *>(0), 0);
+    weightVecs_[0] = new WBitsVec(8, B);
+    weightVecs_[0]->resize(1);
+    weightVecs_[0]->write(0, 0);
+    rootM_->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(0), 0);
 
-    auto * dummyRootS = new BTreeUpperNode<B>(true, true, NULL, true);
+    auto * dummyRootS = new BTreeNode<B>(true, true, NULL, true);
     dummyRootS->pushbackBtm(NULL, 0);
-    rootA_ = new BTreeUpperNode<B>(true, true, dummyRootS);
+    rootA_ = new BTreeNode<B>(true, true, dummyRootS);
     rootA_->pushbackUNode(dummyRootS);
   }
 
@@ -110,12 +129,12 @@ public:
       return;
     }
     for (uint64_t i = 0; i < idxM2S_.size() / B; ++i) {
-      delete weightArrayVec_[i];
+      delete weightVecs_[i];
     }
-    memutil::myfree(weightArrayVec_);
+    memutil::myfree(weightVecs_);
     { // delete separated tree
       auto * rootS = rootA_->getLmBtm();
-      while (reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND) {
+      while (reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND) {
         auto * next = getNextRootS(rootS);
         delete rootS;
         rootS = next;
@@ -135,6 +154,8 @@ public:
 
     memutil::mydelete(rootM_);
     memutil::mydelete(rootA_);
+
+    traCode_ = 9;
   }
 
 
@@ -143,12 +164,23 @@ public:
   }
 
 
+  bool isValidIdxM(const uint64_t idxM) const noexcept {
+    return (isReady() &&
+            idxM < idxM2S_.size() &&
+            (idxM % B) < weightVecs_[idxM / B]->size());
+  }
+
+
   size_t getSumOfWeight() const noexcept {
+    assert(isReady());
+
     return rootM_->getSumOfWeight();
   }
 
 
   size_t getSumOfWeight(const uint64_t ch) const noexcept {
+    assert(isReady());
+
     const auto * retRootS = searchCharA(ch);
     if (retRootS->isDummy() || charS_[reinterpret_cast<uintptr_t>(retRootS->getLmBtm())] != ch) {
       return 0;
@@ -158,28 +190,40 @@ public:
 
 
   uint64_t getWeightFromIdxM(uint64_t idxM) const noexcept {
-    return weightArrayVec_[idxM / B]->read(idxM % B);
+    assert(isValidIdxM(idxM));
+
+    return weightVecs_[idxM / B]->read(idxM % B);
   }
 
 
   uint64_t getCharFromIdxM(const uint64_t idxM) const noexcept {
+    assert(isValidIdxM(idxM));
+
     return charS_[idxM2S_.read(idxM) / B];
   }
 
 
-  uint64_t getCharFromNodeS(const BTreeUpperNode<B> * nodeS) const noexcept {
+  uint64_t getCharFromNodeS(const BTreeNode<B> * nodeS) const noexcept {
+    assert(isReady());
+    assert(nodeS); // nodeS should be valid node
+
     return charS_[reinterpret_cast<uintptr_t>(nodeS->getLmBtm())];
   }
 
 
   uint64_t rank(const uint64_t ch, uint64_t pos, const bool calcTotalRank) const noexcept {
+    assert(isReady());
     assert(pos < rootM_->getSumOfWeight());
+
     auto idxM = searchPosM(pos); // pos is modified to relative pos
     return rank(ch, idxM, pos, calcTotalRank);
   }
 
 
   uint64_t rank(const uint64_t ch, const uint64_t idxM, const uint64_t relativePos, const bool calcTotalRank) const noexcept {
+    assert(isValidIdxM(idxM));
+    assert(relativePos < weightVecs_[idxM / B]->read(idxM % B));
+
     auto chNow = getCharFromIdxM(idxM);
     uint64_t ret = 0;
     uint64_t idxS;
@@ -205,8 +249,13 @@ public:
    * NOTE: rank is 1base
    * @return the smallest pos (0base) s.t. rank_{ch}[0..pos] (pos inclusive).
    */
-  uint64_t select(const BTreeUpperNode<B> * rootS, const uint64_t rank) const noexcept {
+  uint64_t select(const BTreeNode<B> * rootS, const uint64_t rank) const noexcept {
     assert(rank > 0);
+    assert(rootS); // rootS should be valid node
+
+    if (rank > rootS->getSumOfWeight()) {
+      return BTreeNode<B>::NOTFOUND;
+    }
     auto pos = rank - 1;
     const auto idxS = searchPosS(pos, rootS); // pos is modified to the relative pos
     const auto idxM = idxS2M_.read(idxS);
@@ -220,12 +269,10 @@ public:
 
   uint64_t select(const uint64_t ch, const uint64_t rank) const noexcept {
     assert(rank > 0);
+
     const auto * retRootS = searchCharA(ch);
     if (retRootS->isDummy() || getCharFromNodeS(retRootS) != ch) {
-      return BTreeUpperNode<B>::NOTFOUND;
-    }
-    if (rank > retRootS->getSumOfWeight()) {
-      return BTreeUpperNode<B>::NOTFOUND;
+      return BTreeNode<B>::NOTFOUND;
     }
     return select(retRootS, rank);
   }
@@ -233,8 +280,9 @@ public:
 
   uint64_t select(const uint64_t totalRank) const noexcept {
     assert(totalRank > 0);
+
     if (totalRank > rootA_->getSumOfWeight()) {
-      return BTreeUpperNode<B>::NOTFOUND;
+      return BTreeNode<B>::NOTFOUND;
     }
     auto pos = totalRank - 1;
     const auto * retRootS = searchPosA(pos);
@@ -243,8 +291,10 @@ public:
 
 
   void printString(std::ofstream & ofs) const noexcept {
+    assert(isReady());
+
     uint64_t pos = 0;
-    for (auto idxM = searchPosM(pos); idxM != BTreeUpperNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
+    for (auto idxM = searchPosM(pos); idxM != BTreeNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
       const size_t exponent = getWeightFromIdxM(idxM);
       char ch = getCharFromIdxM(idxM);
       for (size_t i = 0; i < exponent; ++i) {
@@ -261,16 +311,15 @@ public:
      sum is modified to be the relative position (0base) from the beginning of the run.
    */
   uint64_t searchPosM(uint64_t & pos) const noexcept {
+    assert(isReady());
     assert(pos < rootM_->getSumOfWeight());
-    // if (sum >= rootM_->getSumOfWeight()) {
-    //   return BTreeUpperNode<B>::NOTFOUND;
-    // }
+
     uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->searchPos(pos));
 
-    const auto * wArray = weightArrayVec_[btmM];
+    const auto * wVec = weightVecs_[btmM];
     uint8_t i = 0;
-    while (pos >= wArray->read(i)) {
-      pos -= wArray->read(i);
+    while (pos >= wVec->read(i)) {
+      pos -= wVec->read(i);
       ++i;
     }
     return btmM * B + i;
@@ -280,7 +329,9 @@ public:
   /**
      search root of separated tree of the largest character that is smaller or equal to 'ch'.
   */
-  BTreeUpperNode<B> * searchCharA(const uint64_t ch) const noexcept {
+  BTreeNode<B> * searchCharA(const uint64_t ch) const noexcept {
+    assert(isReady());
+
     auto * nodeA = rootA_;
     while (true) {
       const bool nowOnBorder = nodeA->isBorder();
@@ -304,11 +355,11 @@ public:
 
   //// private search functions
 private:
-  uint64_t searchPosS(uint64_t & pos, const BTreeUpperNode<B> * rootS) const noexcept {
-    // check this outside
-    // if (pos >= rootS->getSumOfWeight()) {
-    //   return BTreeUpperNode<B>::NOTFOUND;
-    // }
+  uint64_t searchPosS(uint64_t & pos, const BTreeNode<B> * rootS) const noexcept {
+    assert(isReady());
+    assert(rootS); // rootS should be valid node
+    assert(pos < rootS->getSumOfWeight());
+
     uint64_t idxS = B * reinterpret_cast<uintptr_t>(rootS->searchPos(pos));
 
     while (true) {
@@ -326,7 +377,10 @@ private:
   /**
      search idxS with the largest label that is smaller or equal to 'label'
   */
-  uint64_t searchLabelS(const uint64_t label, const BTreeUpperNode<B> * rootS) const noexcept {
+  uint64_t searchLabelS(const uint64_t label, const BTreeNode<B> * rootS) const noexcept {
+    assert(isReady());
+    assert(rootS); // rootS should be valid node
+
     const auto * nodeS = rootS;
     while (true) {
       const bool nowOnBorder = nodeS->isBorder();
@@ -363,37 +417,46 @@ private:
   //// iterator like functions
 public:
   uint64_t getPrevIdxM(const uint64_t idxM) const noexcept {
+    assert(isValidIdxM(idxM));
+
     if (idxM % B) {
       return idxM - 1;
     }
     const uint64_t prevBtmM
       = reinterpret_cast<uintptr_t>(parentM_[idxM / B]->getPrevBtm(idxInSiblingM_[idxM / B]));
-    if (prevBtmM != BTreeUpperNode<B>::NOTFOUND) {
+    if (prevBtmM != BTreeNode<B>::NOTFOUND) {
       return prevBtmM * B + getNumChildrenM(prevBtmM) - 1;
     }
-    return BTreeUpperNode<B>::NOTFOUND;
+    return BTreeNode<B>::NOTFOUND;
   }
 
 
   uint64_t getNextIdxM(const uint64_t idxM) const noexcept {
+    assert(isValidIdxM(idxM));
+
     if ((idxM % B) + 1 < getNumChildrenM(idxM / B)) {
       return idxM + 1;
     }
     const uint64_t nextBtmM
       = reinterpret_cast<uintptr_t>(parentM_[idxM / B]->getNextBtm(idxInSiblingM_[idxM / B]));
-    if (nextBtmM != BTreeUpperNode<B>::NOTFOUND) {
+    if (nextBtmM != BTreeNode<B>::NOTFOUND) {
       return nextBtmM * B;
     }
-    return BTreeUpperNode<B>::NOTFOUND;
+    return BTreeNode<B>::NOTFOUND;
   }
 
 
-  BTreeUpperNode<B> * getFstRootS() const noexcept {
+  BTreeNode<B> * getFstRootS() const noexcept {
+    assert(isReady());
+
     return getNextRootS(rootA_->getLmBtm());
   }
 
 
-  BTreeUpperNode<B> * getPrevRootS(const BTreeUpperNode<B> * node) const noexcept {
+  BTreeNode<B> * getPrevRootS(const BTreeNode<B> * node) const noexcept {
+    assert(isReady());
+    assert(node); // rootS should be valid node
+
     uint8_t idxInSib;
     do {
       idxInSib = node->getIdxInSibling();
@@ -403,7 +466,10 @@ public:
   }
 
 
-  BTreeUpperNode<B> * getNextRootS(const BTreeUpperNode<B> * node) const noexcept {
+  BTreeNode<B> * getNextRootS(const BTreeNode<B> * node) const noexcept {
+    assert(isReady());
+    assert(node); // rootS should be valid node
+
     uint8_t idxInSib;
     do {
       idxInSib = node->getIdxInSibling();
@@ -420,10 +486,10 @@ private:
     }
     const uint64_t prevBtmS
       = reinterpret_cast<uintptr_t>(parentS_[idxS / B]->getPrevBtm(idxInSiblingS_[idxS / B]));
-    if (prevBtmS != BTreeUpperNode<B>::NOTFOUND) {
+    if (prevBtmS != BTreeNode<B>::NOTFOUND) {
       return prevBtmS * B + numChildrenS_[prevBtmS] - 1;
     }
-    return BTreeUpperNode<B>::NOTFOUND;
+    return BTreeNode<B>::NOTFOUND;
   }
 
 
@@ -433,27 +499,27 @@ private:
     }
     const uint64_t nextBtmS
       = reinterpret_cast<uintptr_t>(parentS_[idxS / B]->getNextBtm(idxInSiblingS_[idxS / B]));
-    if (nextBtmS != BTreeUpperNode<B>::NOTFOUND) {
+    if (nextBtmS != BTreeNode<B>::NOTFOUND) {
       return nextBtmS * B;
     }
-    return BTreeUpperNode<B>::NOTFOUND;
+    return BTreeNode<B>::NOTFOUND;
   }
 
 
   //// private getter functions (utilities)
 private:
   uint8_t getNumChildrenM(const uint64_t btmM) const noexcept {
-    return weightArrayVec_[btmM]->size();
+    return weightVecs_[btmM]->size();
   }
 
 
   uint64_t getWeightFromIdxS(uint64_t idxS) const noexcept {
     const uint64_t idxM = idxS2M_.read(idxS);
-    return weightArrayVec_[idxM / B]->read(idxM % B);
+    return weightVecs_[idxM / B]->read(idxM % B);
   }
 
 
-  uint64_t getLabelFromNodeU(const BTreeUpperNode<B> * nodeU, const bool isChildOfBorder)  const noexcept {
+  uint64_t getLabelFromNodeU(const BTreeNode<B> * nodeU, const bool isChildOfBorder)  const noexcept {
     uint64_t idxS;
     if (!isChildOfBorder) {
       idxS = B * reinterpret_cast<uintptr_t>(nodeU->getLmBtm());
@@ -465,7 +531,7 @@ private:
   }
 
 
-  uint64_t getCharFromNodeA(const BTreeUpperNode<B> * nodeA, const bool isChildOfBorder) const noexcept {
+  uint64_t getCharFromNodeA(const BTreeNode<B> * nodeA, const bool isChildOfBorder) const noexcept {
     uint64_t btmS;
     if (!isChildOfBorder) {
       btmS = reinterpret_cast<uintptr_t>(nodeA->getLmBtm()->getLmBtm());
@@ -482,7 +548,6 @@ private:
 
 
   uint64_t getNextBtmM(const uint64_t btmM) const noexcept {
-    //    debugstream2 << __LINE__ << ": getNextBtmM: btmM " << btmM << ", parentM_[btmM] " << parentM_[btmM] << std::endl;
     return reinterpret_cast<uintptr_t>(parentM_[btmM]->getNextBtm(idxInSiblingM_[btmM]));
   }
 
@@ -490,7 +555,7 @@ private:
   /**
      returns root of separated tree that contains the position 'pos' (0based) in alphabetically sorted array
   */
-  BTreeUpperNode<B> * searchPosA(uint64_t & pos) const noexcept {
+  BTreeNode<B> * searchPosA(uint64_t & pos) const noexcept {
     return rootA_->searchPos(pos);
   }
 
@@ -499,7 +564,7 @@ private:
     const uint8_t w = bits::bitSize(numBtms * B - 1);
     idxM2S_.convert(w, numBtms * B);
     idxS2M_.convert(w, numBtms * B);
-    memutil::myrealloc(weightArrayVec_, numBtms);
+    memutil::myrealloc(weightVecs_, numBtms);
     memutil::myrealloc(parentM_, numBtms);
     memutil::myrealloc(parentS_, numBtms);
     memutil::myrealloc(labelM_, numBtms);
@@ -507,6 +572,7 @@ private:
     memutil::myrealloc(idxInSiblingM_, numBtms);
     memutil::myrealloc(idxInSiblingS_, numBtms);
     memutil::myrealloc(numChildrenS_, numBtms);
+    traCode_ = TagRelabelAlgo::getSmallestTraCode(numBtms);
   }
 
 
@@ -519,14 +585,14 @@ private:
   ////
   void changeWeight(const uint64_t idxM, const int64_t change) {
     // update Leaf
-    auto * wArray = weightArrayVec_[idxM / B];
-    const uint64_t val = wArray->read(idxM % B) + change;
-    const uint8_t w = wArray->getW();
+    auto * wVec = weightVecs_[idxM / B];
+    const uint64_t val = wVec->read(idxM % B) + change;
+    const uint8_t w = wVec->getW();
     const uint8_t needW = bits::bitSize(val);
     if (needW > w) {
-      wArray->convert(needW, B);
+      wVec->convert(needW, B);
     }
-    wArray->write(val, idxM % B);
+    wVec->write(val, idxM % B);
     // update mixed tree
     parentM_[idxM / B]->changePSumFrom(idxInSiblingM_[idxM / B], change);
     // update separated tree AND alphabet tree (they are connected seamlessly)
@@ -537,49 +603,46 @@ private:
 
   void asgnLabel(const uint64_t btmM) {
     uint64_t next = getNextBtmM(btmM);
-    uint64_t prev = getPrevBtmM(btmM);
-    if (next == BTreeUpperNode<B>::NOTFOUND) {
-      labelM_[btmM] = labelM_[prev] + X;
-      return;
-    } else if (labelM_[prev] < labelM_[next] - 1){
-      labelM_[btmM] = (labelM_[prev] + labelM_[next]) / 2;
+    uint64_t prev = getPrevBtmM(btmM); // assume that prev alwarys exists
+    uint64_t base = (next == BTreeNode<B>::NOTFOUND) ? TagRelabelAlgo::MAX_LABEL : labelM_[next];
+    if (labelM_[prev] < base - 1) {
+      labelM_[btmM] = (labelM_[prev] + base) / 2;
       return;
     }
-    ++numInRelabel; // 4test
 
-    double criterion = 1;
-    uint64_t criterionLabel = labelM_[next];
-    uint64_t num = 2;
-    uint64_t btmM0 = btmM;
-    uint8_t l = 0;
-    next = getNextBtmM(next);
-    do {
-      assert(l < 63);
-      ++l;
-      criterion *= (2/XT); // *= T giwaku
-      criterionLabel >>= 1;
-      while (prev != BTreeUpperNode<B>::NOTFOUND && (labelM_[prev] >> l) == criterionLabel) { // expand backward
+    base >>= 1;
+    uint64_t tmpBtmM = btmM;
+    uint8_t l = 1;
+    uint64_t num = 1;
+    uint64_t overflowNum = 2;
+    while (true) {
+      while (prev != BTreeNode<B>::NOTFOUND && (labelM_[prev] >> l) == base) { // expand backward
         ++num;
-        btmM0 = prev;
+        tmpBtmM = prev;
         prev = getPrevBtmM(prev);
       }
-      while (next != BTreeUpperNode<B>::NOTFOUND && (labelM_[next] >> l) == criterionLabel){ // expand forward
+      while (next != BTreeNode<B>::NOTFOUND && (labelM_[next] >> l) == base){ // expand forward
         ++num;
         next = getNextBtmM(next);
       }
-    } while (criterion <= num);
+      if (overflowNum >= num) {
+        break;
+      }
+      ++l;
+      base >>= 1;
+      overflowNum = TagRelabelAlgo::getNextOverflowNum(overflowNum, traCode_);
+    }
 
-    numRelabel += num; // 4test
-    // relable num labels
-    uint64_t tLabel = criterionLabel << l;
-    uint64_t interval = (1ULL << l) / num;
+    // relabel num labels
+    uint64_t tmpLabel = base << l;
+    const uint64_t interval = (UINT64_C(1) << l) / num;
     while (true) {
-      labelM_[btmM0] = tLabel;
+      labelM_[tmpBtmM] = tmpLabel;
       if (--num == 0) {
         return;
       }
-      tLabel += interval;
-      btmM0 = getNextBtmM(btmM0);
+      tmpLabel += interval;
+      tmpBtmM = getNextBtmM(tmpBtmM);
     }
   }
 
@@ -592,7 +655,7 @@ private:
      resize
        idxM2S_ to use range [endIdxM, endIdxM + B)
      reserve
-       weightArrayVec_[retBtmM]
+       weightVecs_[retBtmM]
      update
        upper nodes (through handleSplitBtmM())
        labels
@@ -605,7 +668,7 @@ private:
     }
     idxM2S_.resize(endIdxM + B);
     // reserve
-    weightArrayVec_[retBtmM] = new WBitsArray(width, B);
+    weightVecs_[retBtmM] = new WBitsVec(width, B);
     // setup and update
     handleSplitOfBtmInBtm(btmM, retBtmM, weight, parentM_, idxInSiblingM_);
     if (!(rootM_->isRoot())) { // root needs update
@@ -640,7 +703,7 @@ private:
   }
 
 
-  uint64_t setupNewSTree(BTreeUpperNode<B> * predNode, const uint64_t ch) {
+  uint64_t setupNewSTree(BTreeNode<B> * predNode, const uint64_t ch) {
     const uint64_t endIdxS = idxS2M_.size();
     const uint64_t btmS = endIdxS / B;
     if (!(idxS2M_.resizeWithoutReserve(endIdxS + B))) {
@@ -648,14 +711,14 @@ private:
     }
     idxS2M_.resize(endIdxS + B);
     
-    auto * newRootS = new BTreeUpperNode<B>(true, true, reinterpret_cast<BTreeUpperNode<B> *>(btmS));
+    auto * newRootS = new BTreeNode<B>(true, true, reinterpret_cast<BTreeNode<B> *>(btmS));
     parentS_[btmS] = newRootS;
     idxInSiblingS_[btmS] = 0;
     charS_[btmS] = ch;
     numChildrenS_[btmS] = 1; // only dummy idxS exists
     idxS2M_.write(0, btmS * B); // link to dummy idxM of weight 0
 
-    newRootS->pushbackBtm(reinterpret_cast<BTreeUpperNode<B> *>(btmS), 0);
+    newRootS->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(btmS), 0);
     const auto idxInSib = predNode->getIdxInSibling();
     auto * parent = predNode->getParent();
     parent->handleSplitOfChild(newRootS, idxInSib);
@@ -666,7 +729,7 @@ private:
   }
 
 
-  void mvIdxFwd(WBitsArray & wba, uint64_t srcIdx, uint64_t tgtIdx, uint64_t num, WBitsArray & wbaOther) {
+  void mvIdxFwd(WBitsVec & wba, uint64_t srcIdx, uint64_t tgtIdx, uint64_t num, WBitsVec & wbaOther) {
     for (uint64_t i = num; i > 0; --i) {
       const uint64_t idxOther = wba.read(srcIdx + i - 1);
       wba.write(idxOther, tgtIdx + i - 1);
@@ -678,28 +741,28 @@ private:
   uint64_t makeSpaceAfterIdxM(const uint64_t idxM) {
     const uint8_t remIdxM = idxM % B;
     const uint64_t btmM = idxM / B;
-    WBitsArray * wArray0 = weightArrayVec_[btmM];
-    const uint8_t oriNum = wArray0->size();
+    WBitsVec * wVec0 = weightVecs_[btmM];
+    const uint8_t oriNum = wVec0->size();
     if (oriNum < B) {
-      wArray0->resize(oriNum + 1);
+      wVec0->resize(oriNum + 1);
       const uint8_t mvNum = oriNum - remIdxM - 1;
       if (mvNum) {
-        mvWBA_SameW(wArray0->getItrAt(remIdxM + 1), wArray0->getItrAt(remIdxM + 2), mvNum);
+        mvWBA_SameW(wVec0->getItrAt(remIdxM + 1), wVec0->getItrAt(remIdxM + 2), mvNum);
         mvIdxFwd(idxM2S_, idxM + 1, idxM + 2, mvNum, idxS2M_);
       }
-      wArray0->write(0, remIdxM + 1);
+      wVec0->write(0, remIdxM + 1);
       return idxM + 1;
     }
     // split
     uint64_t sum = 0;
     for (uint8_t i = B/2; i < B; ++i) {
-      sum += wArray0->read(i);
+      sum += wVec0->read(i);
     }
-    const auto newBtmM = splitBtmM(wArray0->getW(), btmM, sum);
-    WBitsArray * wArray1 = weightArrayVec_[newBtmM];
-    mvWBA_SameW(wArray0->getItrAt(B/2), wArray1->getItrAt(0), B/2);
-    wArray0->resize(B/2);
-    wArray1->resize(B/2);
+    const auto newBtmM = splitBtmM(wVec0->getW(), btmM, sum);
+    WBitsVec * wVec1 = weightVecs_[newBtmM];
+    mvWBA_SameW(wVec0->getItrAt(B/2), wVec1->getItrAt(0), B/2);
+    wVec0->resize(B/2);
+    wVec1->resize(B/2);
     mvIdxFwd(idxM2S_, btmM*B + B/2, newBtmM*B, B/2, idxS2M_);
     if (remIdxM < B/2) {
       return makeSpaceAfterIdxM(idxM);
@@ -737,11 +800,11 @@ private:
   }
 
 
-  void handleSplitOfBtmInBtm(const uint64_t btm, const uint64_t newBtm, const uint64_t weight, BTreeUpperNode<B> ** parentArray, uint8_t * idxInSibArray) {
+  void handleSplitOfBtmInBtm(const uint64_t btm, const uint64_t newBtm, const uint64_t weight, BTreeNode<B> ** parentArray, uint8_t * idxInSibArray) {
     auto * uNode = parentArray[btm];
     const auto idxInSib = idxInSibArray[btm];
     const auto oriNum = uNode->getNumChildren();
-    BTreeUpperNode<B> * newNode = uNode->handleSplitOfBtm(reinterpret_cast<BTreeUpperNode<B> *>(newBtm), weight, idxInSib);
+    BTreeNode<B> * newNode = uNode->handleSplitOfBtm(reinterpret_cast<BTreeNode<B> *>(newBtm), weight, idxInSib);
     const uint8_t newNum = (oriNum < B) ? oriNum + 1 : B/2 + (idxInSib < B/2);
     // update links to upper nodes
     for (uint8_t i = idxInSib + 1; i < newNum; ++i) {
@@ -759,7 +822,7 @@ private:
   }
 
 
-  uint64_t getPredIdxSFromIdxM(const BTreeUpperNode<B> * rootS, const uint64_t ch, const uint64_t idxM) const noexcept {
+  uint64_t getPredIdxSFromIdxM(const BTreeNode<B> * rootS, const uint64_t ch, const uint64_t idxM) const noexcept {
     const uint64_t btmM = idxM / B;
     if (btmM) { // if btmM is not 0 (0 means btmM is the first btm in the mixed tree)
       uint64_t i = idxM - 1;
@@ -812,7 +875,7 @@ public:
   ////
   uint64_t insertRun(const uint64_t ch, const uint64_t weight, uint64_t & pos) {
     if (pos > rootM_->getSumOfWeight()) {
-      return BTreeUpperNode<B>::NOTFOUND;
+      return BTreeNode<B>::NOTFOUND;
     } else if (pos == rootM_->getSumOfWeight()) {
       pos = 0;
       return pushbackRun(ch, weight);
@@ -834,7 +897,8 @@ public:
       pos = 0;
       changeWeight(idxM, -1 * weightSndHalf);
       idxM = insertNewRunAfter(ch, weight, idxM);
-      insertNewRunAfter(chNow, weightSndHalf, idxM);
+      idxM = insertNewRunAfter(chNow, weightSndHalf, idxM);
+      idxM = getPrevIdxM(idxM);
     }
     return idxM;
   }
@@ -861,7 +925,7 @@ public:
   size_t calcMemBytesSTree() const noexcept {
     size_t size = 0;
     for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       size += rootS->calcMemBytes();
     }
@@ -869,16 +933,16 @@ public:
   }
 
 
-  size_t calcMemBytesWeightArrays() const noexcept {
+  size_t calcMemBytesWeightVecs() const noexcept {
     size_t size = 0;
     for (uint64_t i = 0; i < idxM2S_.size() / B; ++i) {
-      size += weightArrayVec_[i]->calcMemBytes();
+      size += weightVecs_[i]->calcMemBytes();
     }
     return size;
   }
 
 
-  size_t calcMemBytesIdxConvertArrays() const noexcept {
+  size_t calcMemBytesIdxConvertVecs() const noexcept {
     size_t size = 0;
     size += idxM2S_.calcMemBytes();
     size += idxS2M_.calcMemBytes();
@@ -890,7 +954,7 @@ public:
     return (idxM2S_.capacity() / B) * (sizeof(parentM_[0]) + sizeof(parentS_[0]) +
                                        sizeof(labelM_[0]) + sizeof(charS_[0]) +
                                        sizeof(idxInSiblingM_[0]) + sizeof(idxInSiblingS_[0]) +
-                                       sizeof(numChildrenS_[0]) + sizeof(weightArrayVec_[0]));
+                                       sizeof(numChildrenS_[0]) + sizeof(weightVecs_[0]));
   }
 
 
@@ -899,8 +963,8 @@ public:
     size += calcMemBytesMTree();
     size += calcMemBytesATree();
     size += calcMemBytesSTree();
-    size += calcMemBytesWeightArrays();
-    size += calcMemBytesIdxConvertArrays();
+    size += calcMemBytesWeightVecs();
+    size += calcMemBytesIdxConvertVecs();
     size -= sizeof(idxM2S_); // minus double counted part
     size -= sizeof(idxS2M_); // minus double counted part
     size += calcMemBytesBtmArrays();
@@ -911,7 +975,7 @@ public:
   size_t calcNumUsedSTree() const noexcept {
     size_t numUsed = 0;
     for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       numUsed += rootS->calcNumUsed();
     }
@@ -922,7 +986,7 @@ public:
   size_t calcNumSlotsSTree() const noexcept {
     size_t numSlots = 0;
     for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       numSlots += rootS->calcNumSlots();
     }
@@ -942,7 +1006,7 @@ public:
   size_t calcNumAlph() const noexcept {
     size_t numAlph = 0;
     for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       ++numAlph;
     }
@@ -961,11 +1025,11 @@ public:
        << " (= 100*" << rootA_->calcNumUsed() << "/" << rootA_->calcNumSlots() << ")" << std::endl;
     os << "STree: " << calcMemBytesSTree() << " bytes, OccuRate = " << ((calcNumSlotsSTree()) ? 100.0 * calcNumUsedSTree() / calcNumSlotsSTree() : 0)
        << " (= 100*" << calcNumUsedSTree() << "/" << calcNumSlotsSTree() << ")" << std::endl;
-    os << "IdxConverArrays: " << calcMemBytesIdxConvertArrays() << " bytes ~ "
+    os << "IdxConvertVecs: " << calcMemBytesIdxConvertVecs() << " bytes ~ "
        << "(2*" << static_cast<int>(idxM2S_.getW()) << "(bitwidth)*" << idxM2S_.capacity() << "(capacity each))/8, "
        << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * 2 * numRuns / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
        << " (= 100*2*" << numRuns << "/" << (idxM2S_.capacity() + idxS2M_.capacity()) << ")" << std::endl;
-    os << "WeightArrays: " << calcMemBytesWeightArrays() << " bytes" << std::endl;
+    os << "WeightVecs: " << calcMemBytesWeightVecs() << " bytes" << std::endl;
     os << "BtmArrays: " << calcMemBytesBtmArrays() << " bytes, "
        << "OccuRate = " << ((idxM2S_.capacity() + idxS2M_.capacity()) ? 100.0 * (idxM2S_.size() + idxS2M_.size()) / (idxM2S_.capacity() + idxS2M_.capacity()) : 0)
        << " (= 100*" << (idxM2S_.size() + idxS2M_.size())/B << "/" << (idxM2S_.capacity() + idxS2M_.capacity())/B << "), "
@@ -973,15 +1037,13 @@ public:
        << " (= 100*" << idxM2S_.size()/B << "/" << idxM2S_.capacity()/B << "), "
        << "OccuRate (btmS) = " << ((idxS2M_.capacity()) ? 100.0 * idxS2M_.size() / idxS2M_.capacity() : 0)
        << " (= 100*" << idxS2M_.size()/B << "/" << idxS2M_.capacity()/B << ")" << std::endl;
-    // 4test
-    os << "numInRelabel = " << numInRelabel << ", numRelabel = " << numRelabel << ", ratio = " << 1.0 * numRelabel / numInRelabel << std::endl;
   }
 
 
   void printDebugInfo(std::ostream & os) const noexcept {
     {
       uint64_t pos = 0;
-      for (auto idxM = searchPosM(pos); idxM != BTreeUpperNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
+      for (auto idxM = searchPosM(pos); idxM != BTreeNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
         os << "(" << idxM << ":" << getCharFromIdxM(idxM) << "^" << getWeightFromIdxM(idxM) << ") ";
       }
       os << std::endl;
@@ -1022,7 +1084,7 @@ public:
 
     os << "Alphabet: " << std::endl;
     for (const auto * rootS = getFstRootS();
-         reinterpret_cast<uintptr_t>(rootS) != BTreeUpperNode<B>::NOTFOUND;
+         reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       const uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm());
       os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight() << ") ";
