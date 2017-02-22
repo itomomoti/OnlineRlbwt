@@ -866,7 +866,21 @@ private:
 
 
 public:
-  uint64_t pushbackRun(const uint64_t ch, const uint64_t weight) {
+  uint64_t pushbackRun(const uint64_t ch, const uint64_t weight, uint64_t & pos) {
+    const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
+    const auto idxM = btmM * B + getNumChildrenM(btmM) - 1;
+    if (getCharFromIdxM(idxM) != ch) {
+      pos = 0;
+      return insertNewRunAfter(ch, weight, idxM);
+    } else { // merge into the last run
+      pos = getWeightFromIdxM(idxM);
+      changeWeight(idxM, weight);
+      return idxM;
+    }
+  }
+
+
+  uint64_t pushbackRunWithoutMerge(const uint64_t ch, const uint64_t weight) {
     const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
     return insertNewRunAfter(ch, weight, btmM * B + getNumChildrenM(btmM) - 1);
   }
@@ -877,8 +891,7 @@ public:
     if (pos > rootM_->getSumOfWeight()) {
       return BTreeNode<B>::NOTFOUND;
     } else if (pos == rootM_->getSumOfWeight()) {
-      pos = 0;
-      return pushbackRun(ch, weight);
+      return pushbackRun(ch, weight, pos);
     }
     auto idxM = searchPosM(pos); // 'pos' is modified to be the relative pos in the run of 'idxM'
     auto chNow = getCharFromIdxM(idxM);
@@ -1041,6 +1054,27 @@ public:
 
 
   void printDebugInfo(std::ostream & os) const noexcept {
+    {
+      uint64_t c = UINT64_MAX;
+      std::cout << "check runs:" << std::endl;
+      uint64_t pos = 0;
+      uint64_t len = 0;
+      for (auto idxM = searchPosM(pos); idxM != BTreeNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
+        ++pos;
+        len += getWeightFromIdxM(idxM);
+        if (getWeightFromIdxM(idxM) == 0) {
+          std::cout << "detected 0 length run: " << idxM << ", " << pos << std::endl;
+        }
+        if (c == getCharFromIdxM(idxM)) {
+          auto idxM0 = getPrevIdxM(idxM);
+          std::cout << "detected consecutive runs having the same char: " 
+                    << idxM << ", " << pos << ", (" << c << ", " << getWeightFromIdxM(idxM0) << ")" << ", (" << c << ", " << getWeightFromIdxM(idxM) << ")" << std::endl;
+        }
+        c = getCharFromIdxM(idxM);
+      }
+      std::cout << "run: " << pos << ", len: " << len << std::endl;
+    }
+
     {
       uint64_t pos = 0;
       for (auto idxM = searchPosM(pos); idxM != BTreeNode<B>::NOTFOUND; idxM = getNextIdxM(idxM)) {
