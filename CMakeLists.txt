@@ -13,9 +13,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -g -p")
 set(CMAKE_CXX_FLAGS_RELEASE "-ggdb -Ofast -fstrict-aliasing -DNDEBUG -march=native")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -ggdb -Ofast -fstrict-aliasing -march=native")
 
-project(DynRLBWT)
+project(OnlineRLBWT)
 
 add_subdirectory(${PROJECT_SOURCE_DIR}/extern/Basics)
 include_directories(${PROJECT_SOURCE_DIR}/extern/Basics)
-add_executable(${PROJECT_NAME} DynRLBWT.cpp DynRLE.cpp)
-target_link_libraries(DynRLBWT Basics)
+add_executable(${PROJECT_NAME} OnlineRLBWT.cpp DynRLE.cpp)
+target_link_libraries(${PROJECT_NAME} Basics)
