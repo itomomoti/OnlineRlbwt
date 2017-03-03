@@ -7,12 +7,10 @@
 
 #include "cmdline.h"
 #include "DynRLE.hpp"
-#include "DynRLBWT.hpp"
+#include "OnlineRLBWT.hpp"
 
 
 //
-// $ g++ -std=c++14 -march=native -O3 -DNDEBUG -W -Wall -Wno-deprecated -c ../../Basics/BitsUtil.cpp
-// $ g++ -std=c++14 -march=native -O3 -DNDEBUG -W -Wall -Wno-deprecated -o DynRLBWT.out DynRLE.cpp ../../Basics/BitsUtil.o DynRLE.o
 // $ ./DynRLBWT.out -i inputfilename -o outputfilename
 //
 int main(int argc, char *argv[])
