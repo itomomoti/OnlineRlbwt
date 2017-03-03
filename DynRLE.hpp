@@ -16,9 +16,12 @@
 #include <fstream>
 #include <sstream>
 
-#include "../../Basics/BitsUtil.hpp"
-#include "../../Basics/WBitsVec.hpp"
-#include "../../Basics/MemUtil.hpp"
+// include from Basics
+#include "BitsUtil.hpp"
+#include "WBitsVec.hpp"
+#include "MemUtil.hpp"
+//
+
 #include "BTree.hpp"
 
 struct TagRelabelAlgo
@@ -131,7 +134,7 @@ public:
     for (uint64_t i = 0; i < idxM2S_.size() / B; ++i) {
       delete weightVecs_[i];
     }
-    memutil::myfree(weightVecs_);
+    memutil::safefree(weightVecs_);
     { // delete separated tree
       auto * rootS = rootA_->getLmBtm();
       while (reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND) {
@@ -144,16 +147,16 @@ public:
     idxM2S_.shrink_to_fit();
     idxS2M_.clear();
     idxS2M_.shrink_to_fit();
-    memutil::myfree(parentM_);
-    memutil::myfree(parentS_);
-    memutil::myfree(labelM_);
-    memutil::myfree(charS_);
-    memutil::myfree(idxInSiblingM_);
-    memutil::myfree(idxInSiblingS_);
-    memutil::myfree(numChildrenS_);
+    memutil::safefree(parentM_);
+    memutil::safefree(parentS_);
+    memutil::safefree(labelM_);
+    memutil::safefree(charS_);
+    memutil::safefree(idxInSiblingM_);
+    memutil::safefree(idxInSiblingS_);
+    memutil::safefree(numChildrenS_);
 
-    memutil::mydelete(rootM_);
-    memutil::mydelete(rootA_);
+    memutil::safedelete(rootM_);
+    memutil::safedelete(rootA_);
 
     traCode_ = 9;
   }
@@ -564,14 +567,14 @@ private:
     const uint8_t w = bits::bitSize(numBtms * B - 1);
     idxM2S_.convert(w, numBtms * B);
     idxS2M_.convert(w, numBtms * B);
-    memutil::myrealloc(weightVecs_, numBtms);
-    memutil::myrealloc(parentM_, numBtms);
-    memutil::myrealloc(parentS_, numBtms);
-    memutil::myrealloc(labelM_, numBtms);
-    memutil::myrealloc(charS_, numBtms);
-    memutil::myrealloc(idxInSiblingM_, numBtms);
-    memutil::myrealloc(idxInSiblingS_, numBtms);
-    memutil::myrealloc(numChildrenS_, numBtms);
+    memutil::realloc_AbortOnFail(weightVecs_, numBtms);
+    memutil::realloc_AbortOnFail(parentM_, numBtms);
+    memutil::realloc_AbortOnFail(parentS_, numBtms);
+    memutil::realloc_AbortOnFail(labelM_, numBtms);
+    memutil::realloc_AbortOnFail(charS_, numBtms);
+    memutil::realloc_AbortOnFail(idxInSiblingM_, numBtms);
+    memutil::realloc_AbortOnFail(idxInSiblingS_, numBtms);
+    memutil::realloc_AbortOnFail(numChildrenS_, numBtms);
     traCode_ = TagRelabelAlgo::getSmallestTraCode(numBtms);
   }
 

@@ -14,7 +14,7 @@
 
 /*
  * In contrast to DynRLE, DynRLWT has a vertial end marker (em_) at emPos_
-*/
+ */
 template <class DynRLE>
 class DynRLBWT
 {
