@@ -1,4 +1,10 @@
-/**
+/*!
+ * Copyright (c) 2017 Tomohiro I
+ *
+ * This program is released under the MIT License.
+ * http://opensource.org/licenses/mit-license.php
+ */
+/*!
  * @file DynRLE.hpp
  * @brief Dynamic run-length encoding supporting access, rank, select, and insert (TODO delete).
  * @author Tomohiro I
@@ -123,7 +129,7 @@ public:
     auto * dummyRootS = new BTreeNode<B>(true, true, NULL, true);
     dummyRootS->pushbackBtm(NULL, 0);
     rootA_ = new BTreeNode<B>(true, true, dummyRootS);
-    rootA_->pushbackUNode(dummyRootS);
+    rootA_->pushbackBTreeNode(dummyRootS);
   }
 
 
