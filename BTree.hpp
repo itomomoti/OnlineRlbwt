@@ -6,8 +6,8 @@
  */
 /*!
  * @file BTree.hpp
- * @brief Pointer base implementation of upper part of B+tree.
- * @attention Bottom part of B+tree can be implemented in more space efficient way (e.g., using array base implementation).
+ * @brief Pointer-based implementation of upper part of B+tree.
+ * @attention Bottom part of B+tree can be implemented in more space efficient way (e.g., array-based implementation).
  * @author Tomohiro I
  * @date 2017-01-26
  * @todo Support delete.
@@ -20,8 +20,8 @@
 
 
 /*!
- * @brief Pointer base implementation of upper part of B+tree.
- * @attention Bottom part of B+tree can be implemented in more space efficient way (e.g., using array base implementation).
+ * @brief Pointer-based implementation of upper part of B+tree.
+ * @attention Bottom part of B+tree can be implemented in more space efficient way (e.g., array-based implementation).
  * @tparam B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B.
  */
 template <uint8_t B = 64>
