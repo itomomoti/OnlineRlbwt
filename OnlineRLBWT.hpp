@@ -77,7 +77,7 @@ public:
    */
   uint64_t operator[]
   (
-   uint64_t pos //!< in [0, ::getLenWithEm()].
+   uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEm()].
    ) const noexcept {
     assert(pos < getLenWithEm());
 
@@ -105,7 +105,7 @@ public:
   uint64_t totalRank
   (
    uint64_t ch,
-   uint64_t pos //!< in [0, ::getLenWithEm()].
+   uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEm()].
    ) const noexcept {
     assert(pos < getLenWithEm());
 
