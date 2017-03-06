@@ -1,3 +1,9 @@
+/*!
+ * Copyright (c) 2017 Tomohiro I
+ *
+ * This program is released under the MIT License.
+ * http://opensource.org/licenses/mit-license.php
+ */
 #define RLBWT_TEST
 #ifdef RLBWT_TEST
 #include <time.h>
@@ -35,7 +41,7 @@ int main(int argc, char *argv[])
 
   std::cout << "Building RLBWT ..." << std::endl;
 
-  DynRLBWT<DynRLE<32> > rlbwt(16);
+  OnlineRLBWT<DynRLE<32> > rlbwt(16);
 
   { // construct
     char c;
