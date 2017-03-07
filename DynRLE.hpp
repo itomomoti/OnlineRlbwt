@@ -30,6 +30,12 @@
 
 #include "BTree.hpp"
 
+
+/*!
+ * @brief Utilities to implement linked-lists that can answer order queries in O(1) time using Tag-range Relabeling Algorithm (TRA).
+ * @par Reference
+ *   Bender, M. A.; Cole, R.; Demaine, E. D.; Farach-Colton, M. & Zito, J. Two Simplified Algorithms for Maintaining Order in a List, ESA, 2002, 152-164.
+ */
 struct TagRelabelAlgo
 {
   TagRelabelAlgo() = delete;
@@ -56,28 +62,41 @@ struct TagRelabelAlgo
 
 template <uint8_t B> class BTreeNode;
 
-template <uint8_t B = 64> // B should be in {4, 8, 16, 32, 64, 128}. B/2 <= 'numChildren_' <= B
+
+/*!
+ * @brief Dynamic run-length encoding supporting access, rank, select, and insert (TODO delete).
+ * @tparam B Parameter of B+tree, which should be in {4, 8, 16, 32, 64, 128}.
+ * @par Notation
+ *   - T: Current string represented by RLE.
+ *   - Mixed tree: B+tree representing RLE of T.
+ *     - btmM: Index of bottom node of B+tree on the array-based implementation.
+ *             Each bottom node 'btmM' can have 'B' children, which correspond to indexes [btmM * B, (btmM+1) * B).
+ *     - idxM: Indexes that are corresponding to children of btmM.
+ *   - Separated tree: B+tree separately representing runs for each character.
+ *     - btmS: Index of bottom node of B+tree on the array-based implementation (all separated trees share arrays).
+ *             Each bottom node 'btmS' can have 'B' children, which correspond to indexes [btmS * B, (btmS+1) * B).
+ *     - idxS: Indexes that are corresponding to children of btmS.
+ */
+template <uint8_t B = 64>
 class DynRLE
 {
-  // mixed tree
-  BTreeNode<B> * rootM_;
-  // information for leaves and elements for mixed tree
-  WBitsVec idxM2S_;
-  BTreeNode<B> ** parentM_;
-  uint64_t * labelM_;
-  uint8_t * idxInSiblingM_;
-  WBitsVec ** weightVecs_;
-  // alphabet tree: the bottoms of alphabet tree are roots of separated trees
-  BTreeNode<B> * rootA_;
-  // information for leaves and elements for separated tree
-  WBitsVec idxS2M_;
-  BTreeNode<B> ** parentS_;
-  uint64_t * charS_;
-  uint8_t * idxInSiblingS_;
-  uint8_t * numChildrenS_;
+  BTreeNode<B> * rootM_; //!< Root of mixed tree.
+  // Information for leaves and elements for mixed tree.
+  WBitsVec idxM2S_; //!< Packed array mapping idxM to corresponding idxS.
+  BTreeNode<B> ** parentM_; //!< Pointer to parent of btmM.
+  uint64_t * labelM_; //!< TRA label of btmM.
+  uint8_t * idxInSiblingM_; //!< idxInSibling of btmM.
+  WBitsVec ** weightVecs_; //!< 'weightVecs_[btmM]' is packed array storing weights of runs under btmM.
+  // Alphabet tree: the bottoms of alphabet tree are roots of separated trees.
+  BTreeNode<B> * rootA_; //!< Root of alphabet tree.
+  // Information for leaves and elements for separated tree.
+  WBitsVec idxS2M_; //!< Packed array mapping idxS to corresponding idxM.
+  BTreeNode<B> ** parentS_; //!< Pointer to parent of btmS.
+  uint64_t * charS_; //!< 64bit-char of btmS.
+  uint8_t * idxInSiblingS_; //!< idxInSibling of btmS.
+  uint8_t * numChildrenS_; //!< Num of children of btmS.
 
-  // uint8_t reasgnParam_; // reasgnParam_ is set to be the smallest uint in [9..16) such that (reasgnParam_/8)^64 > (max of elements in list)
-  uint8_t traCode_; // traCode in [9..16)
+  uint8_t traCode_; //!< traCode in [9..16). (See also )
 
 public:
   DynRLE() :
@@ -107,8 +126,12 @@ public:
   }
 
 
+  /*!
+   * @brief Reserve space to accomodate 'initNumBtms' bottoms, and init.
+   */
   void init(const size_t initNumBtms) {
     assert(initNumBtms > 0);
+
     if (isReady()) {
       clearAll();
     }
@@ -133,6 +156,9 @@ public:
   }
 
 
+  /*!
+   * @brief Free/delete all allocated objects.
+   */
   void clearAll() {
     if (!isReady()) { // already cleared
       return;
@@ -168,11 +194,17 @@ public:
   }
 
 
+  /*!
+   * @brief Return if data structure is ready.
+   */
   bool isReady() const noexcept {
     return (rootM_ != NULL);
   }
 
 
+  /*!
+   * @brief Return if given 'idxM' corresponds to valid run.
+   */
   bool isValidIdxM(const uint64_t idxM) const noexcept {
     return (isReady() &&
             idxM < idxM2S_.size() &&
@@ -180,6 +212,9 @@ public:
   }
 
 
+  /*!
+   * @brief Return |T|.
+   */
   size_t getSumOfWeight() const noexcept {
     assert(isReady());
 
@@ -187,6 +222,9 @@ public:
   }
 
 
+  /*!
+   * @brief Compute num of occ of 'ch' in T.
+   */
   size_t getSumOfWeight(const uint64_t ch) const noexcept {
     assert(isReady());
 
@@ -198,6 +236,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get length of run corresponding to 'idxM'.
+   */
   uint64_t getWeightFromIdxM(uint64_t idxM) const noexcept {
     assert(isValidIdxM(idxM));
 
@@ -205,6 +246,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get character of run corresponding to 'idxM'.
+   */
   uint64_t getCharFromIdxM(const uint64_t idxM) const noexcept {
     assert(isValidIdxM(idxM));
 
@@ -212,6 +256,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get character corresponding to a node of separated tree.
+   */
   uint64_t getCharFromNodeS(const BTreeNode<B> * nodeS) const noexcept {
     assert(isReady());
     assert(nodeS); // nodeS should be valid node
@@ -220,7 +267,15 @@ public:
   }
 
 
-  uint64_t rank(const uint64_t ch, uint64_t pos, const bool calcTotalRank) const noexcept {
+  /*!
+   * @brief Compute rank_{ch}[0..pos], i.e., num of ch in T[0..pos].
+   */
+  uint64_t rank
+  (
+   const uint64_t ch, //!< 64bit-char.
+   uint64_t pos, //!< Pos (0base) < |T|.
+   const bool calcTotalRank //!< If true, compute 'rank_{ch}[0..pos] + num of occ of characters in T smaller than ch'.
+   ) const noexcept {
     assert(isReady());
     assert(pos < rootM_->getSumOfWeight());
 
@@ -229,7 +284,16 @@ public:
   }
 
 
-  uint64_t rank(const uint64_t ch, const uint64_t idxM, const uint64_t relativePos, const bool calcTotalRank) const noexcept {
+  /*!
+   * @brief Variant of rank function, where pos is specified by 'idxM' and 'relativePos'.
+   */
+  uint64_t rank
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t idxM, //!< Valid idxM.
+   const uint64_t relativePos, //!< Relative pos (0base) < |T|.
+   const bool calcTotalRank //!< If true, compute 'rank_{ch}[0..pos] + num of occ of characters in T smaller than ch'.
+   ) const noexcept {
     assert(isValidIdxM(idxM));
     assert(relativePos < weightVecs_[idxM / B]->read(idxM % B));
 
@@ -254,18 +318,22 @@ public:
   }
 
 
-  /**
-   * NOTE: rank is 1base
-   * @return the smallest pos (0base) s.t. rank_{ch}[0..pos] (pos inclusive).
+  /*!
+   * @brief Compute smallest pos (0base) s.t. 'rank == rank_{ch}[0..pos]'.
+   * @attention Rank is 1base.
    */
-  uint64_t select(const BTreeNode<B> * rootS, const uint64_t rank) const noexcept {
+  uint64_t select
+  (
+   const BTreeNode<B> * rootS, //!< Root of separated tree for 'ch'.
+   const uint64_t rank //!< Rank > 0.
+   ) const noexcept {
     assert(rank > 0);
     assert(rootS); // rootS should be valid node
 
     if (rank > rootS->getSumOfWeight()) {
       return BTreeNode<B>::NOTFOUND;
     }
-    auto pos = rank - 1;
+    auto pos = rank - 1; // -1 for translating rank into 0base pos.
     const auto idxS = searchPosS(pos, rootS); // pos is modified to the relative pos
     const auto idxM = idxS2M_.read(idxS);
     const auto btmM = idxM / B;
@@ -276,7 +344,15 @@ public:
   }
 
 
-  uint64_t select(const uint64_t ch, const uint64_t rank) const noexcept {
+  /*!
+   * @brief Compute smallest pos s.t. 'rank == rank_{ch}[0..pos]'.
+   * @attention Rank is 1base.
+   */
+  uint64_t select
+  (
+   const uint64_t ch, //!< character for select query.
+   const uint64_t rank //!< Rank > 0.
+   ) const noexcept {
     assert(rank > 0);
 
     const auto * retRootS = searchCharA(ch);
@@ -287,7 +363,14 @@ public:
   }
 
 
-  uint64_t select(const uint64_t totalRank) const noexcept {
+  /*!
+   * @brief Compute smallest pos s.t. 'totalRank == totalRank_{ch}[0..pos]'.
+   * @attention TotalRank is 1base.
+   */
+  uint64_t select
+  (
+   const uint64_t totalRank //!< TotalRank > 0.
+   ) const noexcept {
     assert(totalRank > 0);
 
     if (totalRank > rootA_->getSumOfWeight()) {
@@ -299,6 +382,9 @@ public:
   }
 
 
+  /*!
+   * @brief Output string represented by current RLE to std::ofstream.
+   */
   void printString(std::ofstream & ofs) const noexcept {
     assert(isReady());
 
@@ -313,13 +399,16 @@ public:
   }
 
 
-  //// public search functions
+  //// Public search functions
 public:
-  /**
-     Return pointer ('idxM') to the run containing 'sum'-th character (0base) in RLE.
-     sum is modified to be the relative position (0base) from the beginning of the run.
+  /*!
+   * @brief Return 'idxM' corresponding to the run containing 'pos'-th character (0base).
+   * @attention 'pos' is modified to be the relative position (0base) from the beginning of the run.
    */
-  uint64_t searchPosM(uint64_t & pos) const noexcept {
+  uint64_t searchPosM
+  (
+   uint64_t & pos //!< [in,out] Give position to search (< |T|). It is modified to relative position.
+   ) const noexcept {
     assert(isReady());
     assert(pos < rootM_->getSumOfWeight());
 
@@ -335,10 +424,13 @@ public:
   }
 
 
-  /**
-     search root of separated tree of the largest character that is smaller or equal to 'ch'.
-  */
-  BTreeNode<B> * searchCharA(const uint64_t ch) const noexcept {
+  /*!
+   * @brief Search root of separated tree of the largest character that is smaller or equal to 'ch'.
+   */
+  BTreeNode<B> * searchCharA
+  (
+   const uint64_t ch
+   ) const noexcept {
     assert(isReady());
 
     auto * nodeA = rootA_;
@@ -383,9 +475,9 @@ private:
   }
 
 
-  /**
-     search idxS with the largest label that is smaller or equal to 'label'
-  */
+  /*!
+   * Search idxS having the largest label that is smaller or equal to 'label'
+   */
   uint64_t searchLabelS(const uint64_t label, const BTreeNode<B> * rootS) const noexcept {
     assert(isReady());
     assert(rootS); // rootS should be valid node
@@ -423,9 +515,15 @@ private:
   }
 
 
-  //// iterator like functions
+  //// Iterator like functions
 public:
-  uint64_t getPrevIdxM(const uint64_t idxM) const noexcept {
+  /*!
+   * @brief Get previous idxM.
+   */
+  uint64_t getPrevIdxM
+  (
+   const uint64_t idxM //!< Valid idxM.
+   ) const noexcept {
     assert(isValidIdxM(idxM));
 
     if (idxM % B) {
@@ -440,7 +538,13 @@ public:
   }
 
 
-  uint64_t getNextIdxM(const uint64_t idxM) const noexcept {
+  /*!
+   * @brief Get next idxM.
+   */
+  uint64_t getNextIdxM
+  (
+   const uint64_t idxM //!< Valid idxM.
+   ) const noexcept {
     assert(isValidIdxM(idxM));
 
     if ((idxM % B) + 1 < getNumChildrenM(idxM / B)) {
@@ -455,6 +559,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get first root of separated tree, which is dummy.
+   */
   BTreeNode<B> * getFstRootS() const noexcept {
     assert(isReady());
 
@@ -462,6 +569,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get root of separated tree for previous character.
+   */
   BTreeNode<B> * getPrevRootS(const BTreeNode<B> * node) const noexcept {
     assert(isReady());
     assert(node); // rootS should be valid node
@@ -475,6 +585,9 @@ public:
   }
 
 
+  /*!
+   * @brief Get root of separated tree for next character.
+   */
   BTreeNode<B> * getNextRootS(const BTreeNode<B> * node) const noexcept {
     assert(isReady());
     assert(node); // rootS should be valid node
@@ -561,9 +674,9 @@ private:
   }
 
 
-  /**
-     returns root of separated tree that contains the position 'pos' (0based) in alphabetically sorted array
-  */
+  /*!
+   * @brief Return root of separated tree that contains the position 'pos' (0based) in alphabetically sorted array
+   */
   BTreeNode<B> * searchPosA(uint64_t & pos) const noexcept {
     return rootA_->searchPos(pos);
   }
@@ -656,19 +769,22 @@ private:
   }
 
 
-  /**
-     setup
-       parentM_[retBtmM] (by handleSplitBtmM())
-       idxInSiblingM_[retBtmM] (by handleSplitBtmM())
-       labelM_[retBtmM] (by asgnLabel())
-     resize
-       idxM2S_ to use range [endIdxM, endIdxM + B)
-     reserve
-       weightVecs_[retBtmM]
-     update
-       upper nodes (through handleSplitBtmM())
-       labels
-  */
+  /*!
+   * @brief Split btmM.
+   * @post
+   *   This function will do the following:
+   *   - setup
+   *     - parentM_[retBtmM] (by handleSplitOfBtmInBtm())
+   *     - idxInSiblingM_[retBtmM] (by handleSplitOfBtmInBtm())
+   *     - labelM_[retBtmM] (by asgnLabel())
+   *   - resize
+   *     - idxM2S_ to use range [endIdxM, endIdxM + B)
+   *   - reserve
+   *     - weightVecs_[retBtmM]
+   *   - update
+   *     - upper nodes (through handleSplitOfBtmInBtm())
+   *     - labels (by asgnLabel())
+   */
   uint64_t splitBtmM(const uint8_t width, const uint64_t btmM, const uint64_t weight) {
     const uint64_t endIdxM = idxM2S_.size();
     const uint64_t retBtmM = endIdxM / B;
@@ -688,16 +804,19 @@ private:
   }
 
 
-  /**
-     setup
-       parentS_[retBtmS] (by handleSplitBtmS())
-       idxInSiblingS_[retBtmS] (by handleSplitBtmS())
-       charS_[retBtmS]
-     resize
-       idxS2M_ to use range [endIdxS, endIdxS + B)
-     update
-       upper nodes (through handleSplitBtmS())
-  */
+  /*!
+   * @brief Split btmS.
+   * @post
+   *   This function will do the following:
+   *   - setup
+   *     - parentS_[retBtmS] (by handleSplitOfBtmInBtm())
+   *     - idxInSiblingS_[retBtmS] (by handleSplitOfBtmInBtm())
+   *     - charS_[retBtmS]
+   *   - resize
+   *     - idxS2M_ to use range [endIdxS, endIdxS + B)
+   *   - update
+   *     - upper nodes (through handleSplitOfBtmInBtm())
+   */
   uint64_t splitBtmS(const uint64_t btmS, const uint64_t weight) {
     const uint64_t endIdxS = idxS2M_.size();
     const uint64_t retBtmS = endIdxS / B;
@@ -815,14 +934,14 @@ private:
     const auto oriNum = uNode->getNumChildren();
     BTreeNode<B> * newNode = uNode->handleSplitOfBtm(reinterpret_cast<BTreeNode<B> *>(newBtm), weight, idxInSib);
     const uint8_t newNum = (oriNum < B) ? oriNum + 1 : B/2 + (idxInSib < B/2);
-    // update links to upper nodes
+    // Update links to upper nodes.
     for (uint8_t i = idxInSib + 1; i < newNum; ++i) {
       const uint64_t tmp = reinterpret_cast<uintptr_t>(uNode->getChildPtr(i));
       parentArray[tmp] = uNode;
       idxInSibArray[tmp] = i;
     }
-    if (oriNum == B) { // split
-      for (uint8_t i = 0; i < B/2 + (idxInSib >= B/2); ++i) { // for children of newNode
+    if (oriNum == B) { // Split.
+      for (uint8_t i = 0; i < B/2 + (idxInSib >= B/2); ++i) { // For children of newNode.
         const uint64_t tmp = reinterpret_cast<uintptr_t>(newNode->getChildPtr(i));
         parentArray[tmp] = newNode;
         idxInSibArray[tmp] = i;
@@ -833,13 +952,13 @@ private:
 
   uint64_t getPredIdxSFromIdxM(const BTreeNode<B> * rootS, const uint64_t ch, const uint64_t idxM) const noexcept {
     const uint64_t btmM = idxM / B;
-    if (btmM) { // if btmM is not 0 (0 means btmM is the first btm in the mixed tree)
+    if (btmM) { // If btmM is not 0 (0 means btmM is the first btm in the mixed tree).
       uint64_t i = idxM - 1;
       for ( ; i >= btmM * B && getCharFromIdxM(i) != ch; --i) {}
       if (i >= btmM * B) {
         return idxM2S_.read(i);
       } else {
-        return searchLabelS(labelM_[btmM] - 1, rootS); // -1 is needed
+        return searchLabelS(labelM_[btmM] - 1, rootS); // -1 is needed.
       }
     } else { // btmM == 0: dummy idx (== 0) should be ignored.
       uint64_t i = idxM - 1;
@@ -853,9 +972,9 @@ private:
   }
 
 
-  /**
-   * insert new run of character 'ch' and length 'weight' after 'idxM'.
-   * return idx to the inserted run.
+  /*!
+   * @brief Insert new run of character 'ch' and length 'weight' after 'idxM'.
+   * @return IdxM of the inserted run.
    */
   uint64_t insertNewRunAfter(const uint64_t ch, const uint64_t weight, const uint64_t idxM) {
     const auto newIdxM = makeSpaceAfterIdxM(idxM);
@@ -875,13 +994,21 @@ private:
 
 
 public:
-  uint64_t pushbackRun(const uint64_t ch, const uint64_t weight, uint64_t & pos) {
+  /*!
+   * @brief Pushback a run, merging into the last run if possible.
+   */
+  uint64_t pushbackRun
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   uint64_t & pos //!< [out] It is set to relative position of a run.
+   ) {
     const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
     const auto idxM = btmM * B + getNumChildrenM(btmM) - 1;
     if (getCharFromIdxM(idxM) != ch) {
       pos = 0;
       return insertNewRunAfter(ch, weight, idxM);
-    } else { // merge into the last run
+    } else { // Merge into the last run
       pos = getWeightFromIdxM(idxM);
       changeWeight(idxM, weight);
       return idxM;
@@ -889,32 +1016,46 @@ public:
   }
 
 
-  uint64_t pushbackRunWithoutMerge(const uint64_t ch, const uint64_t weight) {
+  /*!
+   * @brief Pushback a run without merge.
+   */
+  uint64_t pushbackRunWithoutMerge
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   ) {
     const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
     return insertNewRunAfter(ch, weight, btmM * B + getNumChildrenM(btmM) - 1);
   }
 
 
-  ////
-  uint64_t insertRun(const uint64_t ch, const uint64_t weight, uint64_t & pos) {
+  /*!
+   * @brief Insert run of 'ch^{weight}' at 'pos', merging into adjacent runs if possible.
+   */
+  uint64_t insertRun
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   uint64_t & pos //!< [in,out] 0base position where inserted run will start. It is modified to relative position in a run.
+   ) {
     if (pos > rootM_->getSumOfWeight()) {
       return BTreeNode<B>::NOTFOUND;
     } else if (pos == rootM_->getSumOfWeight()) {
       return pushbackRun(ch, weight, pos);
     }
-    auto idxM = searchPosM(pos); // 'pos' is modified to be the relative pos in the run of 'idxM'
+    auto idxM = searchPosM(pos); // 'pos' is modified to be the relative pos in the run of 'idxM'.
     auto chNow = getCharFromIdxM(idxM);
     if (ch == chNow) {
       changeWeight(idxM, weight);
     } else if (pos == 0) {
-      idxM = getPrevIdxM(idxM); // move to previous idxM
-      if (idxM > 0 && ch == getCharFromIdxM(idxM)) { // check if 'ch' can be merged with the previous run
+      idxM = getPrevIdxM(idxM); // Move to previous idxM.
+      if (idxM > 0 && ch == getCharFromIdxM(idxM)) { // Check if 'ch' can be merged with the previous run.
         pos = getWeightFromIdxM(idxM);
         changeWeight(idxM, weight);
       } else {
         idxM = insertNewRunAfter(ch, weight, idxM);
       }
-    } else { // current run is split with fstHalf of weight 'pos'
+    } else { // Current run is split with fstHalf of weight 'pos'.
       const auto weightSndHalf = getWeightFromIdxM(idxM) - pos;
       pos = 0;
       changeWeight(idxM, -1 * weightSndHalf);
@@ -926,9 +1067,60 @@ public:
   }
 
 
-  void insertRunWithoutReturn(const uint64_t ch, const uint64_t weight, const uint64_t pos) {
+  /*!
+   * @brief Variant of DynRLE::insertRun for rvalue pos.
+   */
+  uint64_t insertRun
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   uint64_t && pos //!< 0base position where inserted run will start.
+   ) {
     auto tmp = pos;
-    insertRun(ch, weight, tmp);
+    return insertRun(ch, weight, tmp);
+  }
+
+
+  /*!
+   * @brief Insert run of 'ch^{weight}' at 'pos' without merge.
+   */
+  uint64_t insertRunWithoutMerge
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   uint64_t & pos //!< [in,out] 0base position where inserted run will start.
+   ) {
+    if (pos > rootM_->getSumOfWeight()) {
+      return BTreeNode<B>::NOTFOUND;
+    } else if (pos == rootM_->getSumOfWeight()) {
+      pos = 0;
+      return pushbackRunWithoutMerge(ch, weight);
+    }
+    auto idxM = searchPosM(pos); // 'pos' is modified to be the relative pos in the run of 'idxM'.
+    if (pos != 0) { // Current run is split with fstHalf of weight 'pos'.
+      auto chNow = getCharFromIdxM(idxM);
+      const auto weightSndHalf = getWeightFromIdxM(idxM) - pos;
+      changeWeight(idxM, -1 * weightSndHalf);
+      idxM = insertNewRunAfter(chNow, weightSndHalf, idxM);
+    }
+    idxM = getPrevIdxM(idxM); // Move to previous idxM.
+    idxM = insertNewRunAfter(ch, weight, idxM);
+    pos = 0;
+    return idxM;
+  }
+
+
+  /*!
+   * @brief Variant of DynRLE::insertRunWithoutMerge for rvalue pos.
+   */
+  uint64_t insertRunWithoutMerge
+  (
+   const uint64_t ch, //!< 64bit-char.
+   const uint64_t weight, //!< Weight (exponent) of new run.
+   uint64_t && pos //!< 0base position where inserted run will start.
+   ) {
+    auto tmp = pos;
+    return insertRunWithoutMerge(ch, weight, tmp);
   }
 
 
