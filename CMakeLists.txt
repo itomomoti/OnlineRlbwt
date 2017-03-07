@@ -15,7 +15,7 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -ggdb -Ofast -fstrict-aliasing -march=nat
 
 project(OnlineRLBWT)
 
-add_subdirectory(${PROJECT_SOURCE_DIR}/extern/Basics)
-include_directories(${PROJECT_SOURCE_DIR}/extern/Basics)
+add_subdirectory(${PROJECT_SOURCE_DIR}/module/Basics)
+include_directories(${PROJECT_SOURCE_DIR}/module/Basics)
 add_executable(${PROJECT_NAME} OnlineRLBWT.cpp DynRLE.cpp)
 target_link_libraries(${PROJECT_NAME} Basics)
