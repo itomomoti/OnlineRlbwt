@@ -1022,7 +1022,7 @@ public:
   uint64_t pushbackRunWithoutMerge
   (
    const uint64_t ch, //!< 64bit-char.
-   const uint64_t weight, //!< Weight (exponent) of new run.
+   const uint64_t weight //!< Weight (exponent) of new run.
    ) {
     const uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->getRmBtm());
     return insertNewRunAfter(ch, weight, btmM * B + getNumChildrenM(btmM) - 1);
