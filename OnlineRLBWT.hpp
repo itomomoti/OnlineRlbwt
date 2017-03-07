@@ -65,7 +65,7 @@ public:
    */
   void extend
   (
-   uint64_t ch //!< Word-char to append.
+   uint64_t ch //!< 64bit-char to append.
    ) {
     uint64_t idxM = drle_.insertRun(ch, 1, emPos_);
     emPos_ = drle_.rank(ch, idxM, emPos_, true);
@@ -138,7 +138,7 @@ public:
 
 
   /*!
-   * @brief Output original text to given std::ofstream.
+   * @brief Output original text to std::ofstream.
    */
   void invert
   (
@@ -155,6 +155,17 @@ public:
       pos = drle_.rank(ch, idxM, pos, true);
     }
   }
+
+
+  // /*!
+  //  * @brief Output string represented by current RLE to std::ofstream.
+  //  */
+  // void printString
+  // (
+  //  std::ofstream & ofs
+  //  ) const noexcept {
+  //   drle_.printString(ofs);
+  // }
 };
 
 #endif
