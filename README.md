@@ -5,8 +5,8 @@ Author: Tomohiro I
 ### Compile
 
 ```
-mkdir bin
-cd bin
+mkdir build
+cd build
 ```
 
 Then, launch cmake as (default build type is release):
@@ -21,7 +21,7 @@ Finally, build the executable:
 make
 ```
 
-The above command creates the executables in the bin directory. 
+The above command creates the executables in the build directory. 
 
 ### Usage
 
