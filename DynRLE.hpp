@@ -116,7 +116,24 @@ public:
   {}
 
 
-  DynRLE(const size_t initNumBtms) {
+  DynRLE
+  (
+   const size_t initNumBtms
+   )
+    : rootM_(NULL),
+      idxM2S_(),
+      parentM_(NULL),
+      labelM_(NULL),
+      idxInSiblingM_(NULL),
+      weightVecs_(NULL),
+      rootA_(NULL),
+      idxS2M_(),
+      parentS_(NULL),
+      charS_(NULL),
+      idxInSiblingS_(NULL),
+      numChildrenS_(NULL),
+      traCode_(9)
+  {
     init(initNumBtms);
   }
 
