@@ -4,6 +4,8 @@ Author: Tomohiro I
 
 ### Compile
 
+Compilation may require cmake version no less than version 3.1, and a compiler supporting some features of C++14.
+
 ```
 mkdir build
 cd build
@@ -37,11 +39,11 @@ then output "decompressed" string to the file specified by -o option.
 Example.
 
 ```
-OnlineRLBWT -i ../testfile -o testoutput
+./OnlineRLBWT -i ../testfile -o testoutput
 ```
 
-../testfile and testoutput should be the same. Check it by diff.
+Then, ../testfile and ./testoutput should be the same. Check it by diff command.
 
 ```
-diff ../testfile testoutput
+diff ../testfile ./testoutput
 ```

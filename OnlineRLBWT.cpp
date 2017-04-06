@@ -76,17 +76,17 @@ int main(int argc, char *argv[])
 
   auto t2 = std::chrono::high_resolution_clock::now();
 
-	ifs.close();
-	ofs.close();
+  ifs.close();
+  ofs.close();
 
   double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
   std::cout << "construct and string inversion done. " << sec << " sec" << std::endl;
   rlbwt.printStatictics(std::cout);
 
 	size_t bitsize = rlbwt.calcMemBytes() * 8;
-	std::cout << " Size of the structures (bits): " << bitsize << std::endl;
-	std::cout << " Size of the structures (Bytes): " << bitsize/8 << std::endl;
-	std::cout << " Size of the structures (KB): " << (bitsize/8)/1024 << std::endl;
-	std::cout << " Size of the structures (MB): " << ((bitsize/8)/1024)/1024 << std::endl;
+  std::cout << " Size of the structures (bits): " << bitsize << std::endl;
+  std::cout << " Size of the structures (Bytes): " << bitsize/8 << std::endl;
+  std::cout << " Size of the structures (KB): " << (bitsize/8)/1024 << std::endl;
+  std::cout << " Size of the structures (MB): " << ((bitsize/8)/1024)/1024 << std::endl;
 }
 #endif
