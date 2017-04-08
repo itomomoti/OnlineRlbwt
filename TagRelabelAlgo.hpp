@@ -4,6 +4,12 @@
  * This program is released under the MIT License.
  * http://opensource.org/licenses/mit-license.php
  */
+/*!
+ * @file TagRelabelAlgo.hpp
+ * @brief Utilities to implement linked-lists that can answer order queries in O(1) time using Tag-range Relabeling Algorithm (TRA).
+ * @author Tomohiro I
+ * @date 2017-04-08
+ */
 #ifndef INCLUDE_GUARD_TagRelabelAlgo
 #define INCLUDE_GUARD_TagRelabelAlgo
 
