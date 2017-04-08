@@ -29,35 +29,7 @@
 //
 
 #include "BTree.hpp"
-
-
-/*!
- * @brief Utilities to implement linked-lists that can answer order queries in O(1) time using Tag-range Relabeling Algorithm (TRA).
- * @par Reference
- *   Bender, M. A.; Cole, R.; Demaine, E. D.; Farach-Colton, M. & Zito, J. Two Simplified Algorithms for Maintaining Order in a List, ESA, 2002, 152-164.
- */
-struct TagRelabelAlgo
-{
-  TagRelabelAlgo() = delete;
-
-  static constexpr uint8_t NUM_TRACODE{7};
-  static constexpr uint64_t MAX_LABEL{ctcbits::UINTW_MAX(63)};
-  static const uint64_t TBL_Capacities[NUM_TRACODE];
-
-  static uint8_t getSmallestTraCode(uint64_t num) noexcept {
-    assert(TBL_Capacities[NUM_TRACODE-1] >= num);
-
-    uint8_t i = 0;
-    while (TBL_Capacities[i] < num) {
-      ++i;
-    }
-    return i + 9;
-  }
-
-  static uint64_t getNextOverflowNum(uint64_t overflowNum, uint8_t traCode) noexcept {
-    return ((overflowNum * traCode) >> 3) + 1;
-  }
-};
+#include "TagRelabelAlgo.hpp"
 
 
 template <uint8_t B> class BTreeNode;

@@ -19,5 +19,5 @@ project(OnlineRLBWT)
 
 add_subdirectory(${PROJECT_SOURCE_DIR}/module/Basics)
 include_directories(${PROJECT_SOURCE_DIR}/module/Basics)
-add_executable(${PROJECT_NAME} OnlineRLBWT.cpp DynRLE.cpp)
+add_executable(${PROJECT_NAME} OnlineRLBWT.cpp DynRLE.cpp TagRelabelAlgo.cpp)
 target_link_libraries(${PROJECT_NAME} Basics)
