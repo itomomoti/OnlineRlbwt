@@ -4,22 +4,21 @@ Author: Tomohiro I
 
 ### Compile
 
-Compilation may require cmake version no less than version 3.1, and a compiler supporting some features of C++14.
+Compilation may require cmake version no less than 3.1, and a compiler supporting some features of C++14.
 
-```
-mkdir build
-cd build
+```sh
+mkdir build && cd build
 ```
 
 Then, launch cmake as (default build type is release):
 
-```
+```sh
 cmake ..
 ```
 
 Finally, build the executable:
 
-```
+```sh
 make
 ```
 
@@ -29,7 +28,7 @@ The above command creates the executables in the build directory.
 
 Executing OnlineRLBWT without option shows help.
 
-```
+```sh
 OnlineRLBWT
 ```
 
@@ -38,12 +37,12 @@ then output "decompressed" string to the file specified by -o option.
 
 Example.
 
-```
+```sh
 ./OnlineRLBWT -i ../testfile -o testoutput
 ```
 
-Then, ../testfile and ./testoutput should be the same. Check it by diff command.
+Then, ../testfile and ./testoutput should be the same. Check it by cmp command.
 
-```
-diff ../testfile ./testoutput
+```sh
+cmp ../testfile ./testoutput
 ```
