@@ -2,47 +2,47 @@ OnlineRLBWT:
 ===============
 Author: Tomohiro I
 
+### Download
+
+The source codes in 'module' directory are maintained in different repositories.
+So, to download all the necessary source codes, do the following:
+```sh
+git clone --recursive https://github.com/itomomoti/OnlineRLBWT.git
+```
+
 ### Compile
 
 Compilation may require cmake version no less than 3.1, and a compiler supporting some features of C++14.
+It has been tested with "Apple LLVM version 7.3.0 (clang-703.0.31)" and "g++6.3.0".
 
+The following commands creates the executable in the build directory (default build type is release).
 ```sh
 mkdir build && cd build
-```
-
-Then, launch cmake as (default build type is release):
-
-```sh
 cmake ..
-```
-
-Finally, build the executable:
-
-```sh
 make
 ```
 
-The above command creates the executables in the build directory. 
 
 ### Usage
 
 Executing OnlineRLBWT without option shows help.
 
 ```sh
-OnlineRLBWT
+./OnlineRLBWT
 ```
 
-Currently OnlineRLBWT gets input file by -i option, computes its RLBWT online,
-then output "decompressed" string to the file specified by -o option.
+Currently OnlineRLBWT gets input file by -i option, 
+computes its RLBWT online while printing statistics to std::out,
+then writes the "decompressed" string to the file specified by -o option.
 
 Example.
 
 ```sh
-./OnlineRLBWT -i ../testfile -o testoutput
+./OnlineRLBWT -i in_filename -o out_filename
 ```
 
-Then, ../testfile and ./testoutput should be the same. Check it by cmp command.
+Then, in_filename and out_filename should be the same. Check it by cmp command.
 
 ```sh
-cmp ../testfile ./testoutput
+cmp in_filename out_filename
 ```
