@@ -32,7 +32,7 @@
 #include "TagRelabelAlgo.hpp"
 
 
-template <uint8_t B> class BTreeNode;
+template <uint8_t B, uint8_t ROW_NUM> class BTreeNode;
 
 
 /*!
@@ -52,23 +52,25 @@ template <uint8_t B> class BTreeNode;
 template <uint8_t B = 64>
 class DynRLE
 {
-  BTreeNode<B> * rootM_; //!< Root of mixed tree.
+  BTreeNode<B, 1> * rootM_; //!< Root of mixed tree.
   // Information for leaves and elements for mixed tree.
   WBitsVec idxM2S_; //!< Packed array mapping idxM to corresponding idxS.
-  BTreeNode<B> ** parentM_; //!< Pointer to parent of btmM.
+  BTreeNode<B, 1> ** parentM_; //!< Pointer to parent of btmM.
   uint64_t * labelM_; //!< TRA label of btmM.
   uint8_t * idxInSiblingM_; //!< idxInSibling of btmM.
   WBitsVec ** weightVecs_; //!< 'weightVecs_[btmM]' is packed array storing weights of runs under btmM.
   // Alphabet tree: the bottoms of alphabet tree are roots of separated trees.
-  BTreeNode<B> * rootA_; //!< Root of alphabet tree.
+  BTreeNode<B, 1> * rootA_; //!< Root of alphabet tree.
   // Information for leaves and elements for separated tree.
   WBitsVec idxS2M_; //!< Packed array mapping idxS to corresponding idxM.
-  BTreeNode<B> ** parentS_; //!< Pointer to parent of btmS.
+  BTreeNode<B, 1> ** parentS_; //!< Pointer to parent of btmS.
   uint64_t * charS_; //!< 64bit-char of btmS.
   uint8_t * idxInSiblingS_; //!< idxInSibling of btmS.
   uint8_t * numChildrenS_; //!< Num of children of btmS.
 
   uint8_t traCode_; //!< traCode in [9..16). (See also )
+
+  static constexpr uint8_t ROW0{0};
 
 public:
   DynRLE() :
@@ -136,10 +138,10 @@ public:
     weightVecs_[0] = new WBitsVec(8, B);
     weightVecs_[0]->resize(1);
     weightVecs_[0]->write(0, 0);
-    rootM_->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(0), 0);
+    rootM_->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(0), {0});
 
     auto * dummyRootS = new BTreeNode<B>(true, true, NULL, true);
-    dummyRootS->pushbackBtm(NULL, 0);
+    dummyRootS->pushbackBtm(NULL, {0});
     rootA_ = new BTreeNode<B>(true, true, dummyRootS);
     rootA_->pushbackBTreeNode(dummyRootS);
   }
@@ -207,7 +209,7 @@ public:
   size_t getSumOfWeight() const noexcept {
     assert(isReady());
 
-    return rootM_->getSumOfWeight();
+    return rootM_->getSumOfWeight(ROW0);
   }
 
 
@@ -221,7 +223,7 @@ public:
     if (retRootS->isDummy() || charS_[reinterpret_cast<uintptr_t>(retRootS->getLmBtm())] != ch) {
       return 0;
     }
-    return retRootS->getSumOfWeight();
+    return retRootS->getSumOfWeight(ROW0);
   }
 
 
@@ -266,7 +268,7 @@ public:
    const bool calcTotalRank //!< If true, compute 'rank_{ch}[0..pos] + num of occ of characters in T smaller than ch'.
    ) const noexcept {
     assert(isReady());
-    assert(pos < rootM_->getSumOfWeight());
+    assert(pos < rootM_->getSumOfWeight(ROW0));
 
     auto idxM = searchPosM(pos); // pos is modified to relative pos
     return rank(ch, idxM, pos, calcTotalRank);
@@ -303,7 +305,7 @@ public:
     for (auto tmpIdxS = btmS * B; tmpIdxS < idxS + (ch != chNow); ++tmpIdxS) {
       ret += getWeightFromIdxS(tmpIdxS);
     }
-    return ret + parentS_[btmS]->calcPSum(idxInSiblingS_[btmS], calcTotalRank);
+    return ret + parentS_[btmS]->calcPSum(ROW0, idxInSiblingS_[btmS], calcTotalRank);
   }
 
 
@@ -319,7 +321,7 @@ public:
     assert(rank > 0);
     assert(rootS); // rootS should be valid node
 
-    if (rank > rootS->getSumOfWeight()) {
+    if (rank > rootS->getSumOfWeight(ROW0)) {
       return BTreeNode<B>::NOTFOUND;
     }
     auto pos = rank - 1; // -1 for translating rank into 0base pos.
@@ -329,7 +331,7 @@ public:
     for (auto tmpIdxM = btmM * B; tmpIdxM < idxM; ++tmpIdxM) {
       pos += getWeightFromIdxM(tmpIdxM);
     }
-    return pos + parentM_[btmM]->calcPSum(idxInSiblingM_[btmM], false);
+    return pos + parentM_[btmM]->calcPSum(ROW0, idxInSiblingM_[btmM], false);
   }
 
 
@@ -362,7 +364,7 @@ public:
    ) const noexcept {
     assert(totalRank > 0);
 
-    if (totalRank > rootA_->getSumOfWeight()) {
+    if (totalRank > rootA_->getSumOfWeight(ROW0)) {
       return BTreeNode<B>::NOTFOUND;
     }
     auto pos = totalRank - 1;
@@ -399,9 +401,9 @@ public:
    uint64_t & pos //!< [in,out] Give position to search (< |T|). It is modified to relative position.
    ) const noexcept {
     assert(isReady());
-    assert(pos < rootM_->getSumOfWeight());
+    assert(pos < rootM_->getSumOfWeight(ROW0));
 
-    uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->searchPos(pos));
+    uint64_t btmM = reinterpret_cast<uintptr_t>(rootM_->searchPos(ROW0, pos));
 
     const auto * wVec = weightVecs_[btmM];
     uint8_t i = 0;
@@ -448,9 +450,9 @@ private:
   uint64_t searchPosS(uint64_t & pos, const BTreeNode<B> * rootS) const noexcept {
     assert(isReady());
     assert(rootS); // rootS should be valid node
-    assert(pos < rootS->getSumOfWeight());
+    assert(pos < rootS->getSumOfWeight(ROW0));
 
-    uint64_t idxS = B * reinterpret_cast<uintptr_t>(rootS->searchPos(pos));
+    uint64_t idxS = B * reinterpret_cast<uintptr_t>(rootS->searchPos(ROW0, pos));
 
     while (true) {
       auto weight = getWeightFromIdxS(idxS);
@@ -667,7 +669,7 @@ private:
    * @brief Return root of separated tree that contains the position 'pos' (0based) in alphabetically sorted array
    */
   BTreeNode<B> * searchPosA(uint64_t & pos) const noexcept {
-    return rootA_->searchPos(pos);
+    return rootA_->searchPos(ROW0, pos);
   }
 
 
@@ -705,10 +707,10 @@ private:
     }
     wVec->write(val, idxM % B);
     // update mixed tree
-    parentM_[idxM / B]->changePSumFrom(idxInSiblingM_[idxM / B], change);
+    parentM_[idxM / B]->changePSumFrom(ROW0, idxInSiblingM_[idxM / B], change);
     // update separated tree AND alphabet tree (they are connected seamlessly)
     const uint64_t btmS = idxM2S_.read(idxM) / B;
-    parentS_[btmS]->changePSumFrom(idxInSiblingS_[btmS], change);
+    parentS_[btmS]->changePSumFrom(ROW0, idxInSiblingS_[btmS], change);
   }
 
 
@@ -835,7 +837,7 @@ private:
     numChildrenS_[btmS] = 1; // only dummy idxS exists
     idxS2M_.write(0, btmS * B); // link to dummy idxM of weight 0
 
-    newRootS->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(btmS), 0);
+    newRootS->pushbackBtm(reinterpret_cast<BTreeNode<B> *>(btmS), {0});
     const auto idxInSib = predNode->getIdxInSibling();
     auto * parent = predNode->getParent();
     parent->handleSplitOfChild(newRootS, idxInSib);
@@ -921,7 +923,7 @@ private:
     auto * uNode = parentArray[btm];
     const auto idxInSib = idxInSibArray[btm];
     const auto oriNum = uNode->getNumChildren();
-    BTreeNode<B> * newNode = uNode->handleSplitOfBtm(reinterpret_cast<BTreeNode<B> *>(newBtm), weight, idxInSib);
+    BTreeNode<B> * newNode = uNode->handleSplitOfBtm(reinterpret_cast<BTreeNode<B> *>(newBtm), {weight}, idxInSib);
     const uint8_t newNum = (oriNum < B) ? oriNum + 1 : B/2 + (idxInSib < B/2);
     // Update links to upper nodes.
     for (uint8_t i = idxInSib + 1; i < newNum; ++i) {
@@ -1027,9 +1029,9 @@ public:
    const uint64_t weight, //!< Weight (exponent) of new run.
    uint64_t & pos //!< [in,out] 0base position where inserted run will start. It is modified to relative position in a run.
    ) {
-    if (pos > rootM_->getSumOfWeight()) {
+    if (pos > rootM_->getSumOfWeight(ROW0)) {
       return BTreeNode<B>::NOTFOUND;
-    } else if (pos == rootM_->getSumOfWeight()) {
+    } else if (pos == rootM_->getSumOfWeight(ROW0)) {
       return pushbackRun(ch, weight, pos);
     }
     auto idxM = searchPosM(pos); // 'pos' is modified to be the relative pos in the run of 'idxM'.
@@ -1079,9 +1081,9 @@ public:
    const uint64_t weight, //!< Weight (exponent) of new run.
    uint64_t & pos //!< [in,out] 0base position where inserted run will start.
    ) {
-    if (pos > rootM_->getSumOfWeight()) {
+    if (pos > rootM_->getSumOfWeight(ROW0)) {
       return BTreeNode<B>::NOTFOUND;
-    } else if (pos == rootM_->getSumOfWeight()) {
+    } else if (pos == rootM_->getSumOfWeight(ROW0)) {
       pos = 0;
       return pushbackRunWithoutMerge(ch, weight);
     }
@@ -1281,7 +1283,7 @@ public:
         os << "[" << i*B << "-" << (i+1)*B-1 << "] (num=" << (int)getNumChildrenM(i) << " lbl=" 
                   << labelM_[i] << " par=" << parentM_[i] << " sib=" << (int)idxInSiblingM_[i] << ") "
                   << "=> " << nextBtmM * B << std::endl;
-        for (uint64_t j = 0; j < B; ++j) {
+        for (uint64_t j = 0; j < getNumChildrenM(i); ++j) {
           if (j < getNumChildrenM(i) && B*i+j != idxS2M_.read(idxM2S_.read(B*i+j))) {
             os << "!!"; // WARNING, links are not maintained correctly
           }
@@ -1311,7 +1313,7 @@ public:
          reinterpret_cast<uintptr_t>(rootS) != BTreeNode<B>::NOTFOUND;
          rootS = getNextRootS(rootS)) {
       const uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm());
-      os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight() << ") ";
+      os << "(" << charS_[btmS] << ", " << rootS->getSumOfWeight(ROW0) << ") ";
     }
     os << std::endl;
   }
