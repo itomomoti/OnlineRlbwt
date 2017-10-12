@@ -167,9 +167,9 @@ public:
       }
     }
     idxM2S_.clear();
-    idxM2S_.shrink_to_fit();
+    idxM2S_.changeCapacity();
     idxS2M_.clear();
-    idxS2M_.shrink_to_fit();
+    idxS2M_.changeCapacity();
     memutil::safefree(parentM_);
     memutil::safefree(parentS_);
     memutil::safefree(labelM_);
