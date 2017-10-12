@@ -17,6 +17,7 @@
 #include <ostream>
 #include <fstream>
 
+using bwtintvl = std::pair<uint64_t, uint64_t>;
 
 /*!
  * @brief Online Run-length encoded Burrows–Wheeler transform (RLBWT).
@@ -109,14 +110,55 @@ public:
    ) const noexcept {
     assert(pos < getLenWithEm());
 
-    if (pos == emPos_ && ch == em_) {
-      pos = 0;
-      return 1;
-    }
     if (pos > emPos_) {
       --pos;
     }
     return drle_.rank(ch, pos, true);
+  }
+
+
+  /*!
+   * @brief Compute bwt-interval for cW from bwt-interval for W
+   * @note Intervals are [left, right) : right bound is excluded
+   */
+  bwtintvl lfMap
+  (
+   bwtintvl intvl,
+   uint64_t ch
+   ) const noexcept {
+    assert(ch != getEm());
+    assert(intvl.first <= getLenWithEm() && intvl.second <= getLenWithEm());
+
+    // If "ch" is not in the alphabet or empty interval, return empty interval.
+    const auto * retRootS = drle_.searchCharA(ch);
+    if (retRootS->isDummy() || drle_.getCharFromNodeS(retRootS) != ch || intvl.first >= intvl.second) {
+      return {0, 0};
+    }
+
+    uint64_t l = intvl.first - (intvl.first > emPos_);
+    uint64_t r = intvl.second - (intvl.second > emPos_);
+    const uint64_t idxM = drle_.searchPosM(l); // l is modified to relative pos.
+    // +1 because in F.select(0, ch) we are not taking into account the end-marker,
+    // which is in position 0 but not explicitly stored in F.
+    return {
+      drle_.rank(ch, idxM, l, true) - (drle_.getCharFromIdxM(idxM) == ch) + 1,
+        drle_.rank(ch, r-1, true) + 1
+        };
+  }
+
+
+  /*!
+   * @brief LF map.
+   */
+  uint64_t lfMap(uint64_t i){
+    assert(i < getLenWithEm());
+
+    if (i > emPos_) {
+      --i;
+    }
+    const uint64_t idxM = drle_.searchPosM(i);
+    const unsigned char ch = drle_.getCharFromIdxM(idxM);
+    return drle_.rank(ch, idxM, i, true);
   }
 
 
@@ -157,17 +199,6 @@ public:
       pos = drle_.rank(ch, idxM, pos, true);
     }
   }
-
-
-  // /*!
-  //  * @brief Output string represented by current RLE to std::ofstream.
-  //  */
-  // void printString
-  // (
-  //  std::ofstream & ofs
-  //  ) const noexcept {
-  //   drle_.printString(ofs);
-  // }
 };
 
 #endif
