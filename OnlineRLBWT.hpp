@@ -109,9 +109,11 @@ public:
    ) const noexcept {
     assert(pos < getLenWithEm());
 
-    if (pos == emPos_) {
-      return em_;
-    } else if (pos > emPos_) {
+    if (pos == emPos_ && ch == em_) {
+      pos = 0;
+      return 1;
+    }
+    if (pos > emPos_) {
       --pos;
     }
     return drle_.rank(ch, pos, true);
