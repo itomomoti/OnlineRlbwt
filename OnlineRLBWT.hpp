@@ -10,8 +10,8 @@
  * @author Tomohiro I
  * @date 2017-01-29
  */
-#ifndef INCLUDE_GUARD_DynRLBWT
-#define INCLUDE_GUARD_DynRLBWT
+#ifndef INCLUDE_GUARD_OnlineRLBWT
+#define INCLUDE_GUARD_OnlineRLBWT
 
 #include <stdint.h>
 #include <ostream>
