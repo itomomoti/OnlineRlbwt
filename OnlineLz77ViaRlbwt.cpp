@@ -22,10 +22,11 @@
 #include "OnlineLz77ViaRlbwt.hpp"
 
 
+using namespace itmmti;
 using SizeT = uint32_t; // Text length should fit in SizeT.
 
 //
-// $ ./LZ77ViaOnlineRLBWT -i inputfilename -o outputfilename
+// $ ./LZ77ViaOnlineRlbwt -i inputfilename -o outputfilename
 //
 int main(int argc, char *argv[])
 {
@@ -42,14 +43,14 @@ int main(int argc, char *argv[])
 
   auto t1 = std::chrono::high_resolution_clock::now();
 
-	std::ifstream ifs(in);
-	std::ofstream ofs(out);
+  std::ifstream ifs(in);
+  std::ofstream ofs(out);
 
   const size_t step = 1000000; // Print status every step characters.
   size_t last_step = 0;
   std::cout << "LZ77 Parsing ..." << std::endl;
 
-  OnlineRLBWT<DynRleAssoc<32, uint32_t>, 32> rlbwt(128);
+  OnlineRlbwt<DynRleAssoc<32, uint32_t>, 32> rlbwt(128);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   SizeT z = 0; // LZ phrase counter
@@ -64,7 +65,6 @@ int main(int argc, char *argv[])
       // std::cout << pos << ": z = " << z << ", l = " << l << ", ref = " << std::get<2>(tracker) - l << ", succ = " << rlbwt.getSuccSamplePos()
       //           << ", tracker = (" << std::get<0>(tracker) << ", " << std::get<1>(tracker) << ", " << std::get<2>(tracker) << "), "
       //           << "insert " << c << " at " << rlbwt.getEmPos() << std::endl;
-      // rlbwt.printDebugInfo(std::cout);
       if (pos > last_step + (step - 1)) {
         last_step = pos;
         std::cout << " " << pos << " characters processed ..." << std::endl;
@@ -94,6 +94,11 @@ int main(int argc, char *argv[])
     if (std::get<0>(tracker) == rlbwt.getEmPos()) {
       std::get<2>(tracker) = rlbwt.getSuccSamplePos();
     }
+
+    // if (verbose) {
+    //   std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
+    //   rlbwt.printDebugInfo(std::cout);
+    // }
   }
   if (l) {
     ++z;
@@ -116,9 +121,11 @@ int main(int argc, char *argv[])
   std::cout << "Number of factors z = " << z << std::endl;
   rlbwt.printStatictics(std::cout);
 
-	size_t bitsize = rlbwt.calcMemBytes() * 8;
+  size_t bitsize = rlbwt.calcMemBytes() * 8;
   std::cout << " Size of the structures (bits): " << bitsize << std::endl;
   std::cout << " Size of the structures (Bytes): " << bitsize/8 << std::endl;
   std::cout << " Size of the structures (KB): " << (bitsize/8)/1024 << std::endl;
   std::cout << " Size of the structures (MB): " << ((bitsize/8)/1024)/1024 << std::endl;
+
+  return 0;
 }
