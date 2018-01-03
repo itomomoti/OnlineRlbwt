@@ -19,7 +19,8 @@
 #include <chrono>
 
 #include "cmdline.h"
-#include "OnlineLz77ViaRlbwt.hpp"
+#include "OnlineRLBWT.hpp"
+#include "DynRleWithValue.hpp"
 
 
 using namespace itmmti;
@@ -50,7 +51,7 @@ int main(int argc, char *argv[])
   size_t last_step = 0;
   std::cout << "LZ77 Parsing ..." << std::endl;
 
-  OnlineRlbwt<DynRleAssoc<32, uint32_t>, 32> rlbwt(128);
+  OnlineRlbwt<DynRleWithValue<32, 32> > rlbwt(128);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   SizeT z = 0; // LZ phrase counter
@@ -58,16 +59,29 @@ int main(int argc, char *argv[])
   char c; // Assume that the input character fits in char.
   unsigned char uc;
 
+  // {//test
+  //   if (reinterpret_cast<void *>(0) == nullptr) {
+  //     std::cout << "a" << std::endl;
+  //   } else {
+  //     std::cout << "b" << std::endl;
+  //   }
+  //   return 0;
+  // }
+
   while (ifs.peek() != std::ios::traits_type::eof()) {
     ifs.get(c);
     uc = static_cast<unsigned char>(c);
     if (verbose) {
       // std::cout << pos << ": z = " << z << ", l = " << l << ", ref = " << std::get<2>(tracker) - l << ", succ = " << rlbwt.getSuccSamplePos()
       //           << ", tracker = (" << std::get<0>(tracker) << ", " << std::get<1>(tracker) << ", " << std::get<2>(tracker) << "), "
-      //           << "insert " << c << " at " << rlbwt.getEmPos() << std::endl;
+      //           << "insert " << (int)c << "(" << c << ")" << " at " << rlbwt.getEndmarkerPos() << std::endl;
       if (pos > last_step + (step - 1)) {
         last_step = pos;
         std::cout << " " << pos << " characters processed ..." << std::endl;
+        // {//debug check if text can be decompressed correctly from rlbwt
+        //   std::ifstream ifssss(in);
+        //   rlbwt.checkDecompress(ifssss);
+        // }
       }
     }
 
@@ -86,19 +100,25 @@ int main(int argc, char *argv[])
       // }
       // Reset variables.
       l = 0;
-      tracker = {0, rlbwt.getLenWithEm() + 1, 0}; // +1 because we have not inserted "ch".
+      tracker = {0, rlbwt.getLenWithEndmarker() + 1, 0}; // +1 because we have not inserted "ch".
     }
 
-    rlbwt.extend(uc, pos);
+    rlbwt.extend(uc);
     ++pos;
-    if (std::get<0>(tracker) == rlbwt.getEmPos()) {
+    if (std::get<0>(tracker) == rlbwt.getEndmarkerPos()) {
       std::get<2>(tracker) = rlbwt.getSuccSamplePos();
     }
 
-    // if (verbose) {
-    //   std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
-    //   rlbwt.printDebugInfo(std::cout);
-    // }
+    if (verbose) {
+      // std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
+      // if (pos > 600) {
+      //   rlbwt.printDebugInfo(std::cout);
+      //   {//debug check if text can be decompressed correctly from rlbwt
+      //     std::ifstream ifssss(in);
+      //     rlbwt.checkDecompress(ifssss);
+      //   }
+      // }
+    }
   }
   if (l) {
     ++z;
