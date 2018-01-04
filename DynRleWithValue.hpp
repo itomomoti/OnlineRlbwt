@@ -2797,6 +2797,8 @@ namespace itmmti
         const size_t numUsedBtm = calcNumUsedBtmM() + calcNumUsedBtmS();
         os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph()
            << ", BTreeNode arity kB = " << static_cast<uint64_t>(kB) << " BtmNode arity kBtmB = " << static_cast<uint64_t>(kBtmB) << std::endl;
+        os << "MTree bottom array size = " << size_[kM] << ", capacity = " << capacity_[kM] << std::endl;
+        os << "STree bottom array size = " << size_[kS] << ", capacity = " << capacity_[kS] << std::endl;
         os << "Total: " << calcMemBytes() << " bytes" << std::endl;
         os << "MTree: " << calcMemBytesMTree() << " bytes, OccuRate = " << ((numSlotsM) ? 100.0 * numUsedM / numSlotsM : 0)
            << " (= 100*" << numUsedM << "/" << numSlotsM << ")" << std::endl;
