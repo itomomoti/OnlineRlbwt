@@ -632,8 +632,8 @@ namespace itmmti
      */
     bool isValidIdxM(const uint64_t idxM) const noexcept {
       return (isReady() &&
-              (idxM / kB) < size_[kM] &&
-              btmPtrs_[kM][idxM / kBtmB]->getNumChildren());
+              (idxM / kBtmB) < size_[kM] &&
+              (idxM % kBtmB) < btmPtrs_[kM][idxM / kBtmB]->getNumChildren());
     }
 
 
@@ -642,8 +642,8 @@ namespace itmmti
      */
     bool isValidIdxS(const uint64_t idxS) const noexcept {
       return (isReady() &&
-              (idxS / kB) < size_[kS] &&
-              btmPtrs_[kS][idxS / kBtmB]->getNumChildren());
+              (idxS / kBtmB) < size_[kS] &&
+              (idxS % kBtmB) < btmPtrs_[kS][idxS / kBtmB]->getNumChildren());
     }
 
 
@@ -1038,7 +1038,6 @@ namespace itmmti
      const void * btmNodeS //!< Pointer to BtmNode for STree 
      ) const noexcept {
       uint64_t sum = 0;
-      uint64_t bitPos = 0;
       for (uint64_t i = 0; i < getNumChildrenFromBtmNode(btmNodeS); ++i) {
         const auto idxM = static_cast<const BtmNode *>(btmNodeS)->readLink(i);
         sum += getWeightFromIdxM(idxM);
