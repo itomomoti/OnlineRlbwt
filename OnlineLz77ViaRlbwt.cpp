@@ -19,8 +19,8 @@
 #include <chrono>
 
 #include "cmdline.h"
-#include "OnlineRLBWT.hpp"
-#include "DynRleWithValue.hpp"
+#include "OnlineLz77ViaRlbwt.hpp"
+#include "DynRleForRlbwt.hpp"
 
 
 using namespace itmmti;
@@ -32,9 +32,9 @@ using SizeT = uint32_t; // Text length should fit in SizeT.
 int main(int argc, char *argv[])
 {
   cmdline::parser parser;
-  parser.add<std::string>("input",'i', "input file name", true);
-  parser.add<std::string>("output",'o', "output file name", true);
-  parser.add<bool>("verbose",'v', "verbose", false, 0);
+  parser.add<std::string>("input", 'i', "input file name", true);
+  parser.add<std::string>("output", 'o', "output file name", true);
+  parser.add<bool>("verbose", 'v', "verbose", false, 0);
   parser.add("help", 0, "print help");
 
   parser.parse_check(argc, argv);
@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
   size_t last_step = 0;
   std::cout << "LZ77 Parsing ..." << std::endl;
 
-  OnlineRlbwt<DynRleWithValue<32, 32> > rlbwt(128);
+  OnlineLz77ViaRlbwt<DynRleForRlbwt<32, 32> > rlbwt(128);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   SizeT z = 0; // LZ phrase counter
@@ -110,13 +110,16 @@ int main(int argc, char *argv[])
     }
 
     if (verbose) {
-      // std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
-      // if (pos > 600) {
+      // if (pos >= 677) {
+      //   std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
       //   rlbwt.printDebugInfo(std::cout);
       //   {//debug check if text can be decompressed correctly from rlbwt
       //     std::ifstream ifssss(in);
       //     rlbwt.checkDecompress(ifssss);
       //   }
+      // }
+      // if (pos > 680) {
+      //   exit(1);
       // }
     }
   }
@@ -140,12 +143,6 @@ int main(int argc, char *argv[])
   std::cout << "LZ compression done. " << sec << " sec" << std::endl;
   std::cout << "Number of factors z = " << z << std::endl;
   rlbwt.printStatictics(std::cout);
-
-  size_t bitsize = rlbwt.calcMemBytes() * 8;
-  std::cout << " Size of the structures (bits): " << bitsize << std::endl;
-  std::cout << " Size of the structures (Bytes): " << bitsize/8 << std::endl;
-  std::cout << " Size of the structures (KiB): " << (bitsize/8)/1024 << std::endl;
-  std::cout << " Size of the structures (MiB): " << ((bitsize/8)/1024)/1024 << std::endl;
 
   return 0;
 }
