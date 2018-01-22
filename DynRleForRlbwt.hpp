@@ -52,16 +52,16 @@ namespace itmmti
    *             Each bottom node "btmS" can have "kBtmB" children, which correspond to indexes [btmS * kBtmB, (btmS+1) * kBtmB).
    *     - idxS: Indexes that are corresponding to children of "btmS".
    */
-  template<uint8_t param_kB, uint8_t param_kBtmB>
+  template<uint8_t tparam_kB, uint8_t tparam_kBtmB>
   class DynRleForRlbwt
   {
   public:
     // Public constant, alias etc.
-    static constexpr uint8_t kB{param_kB};
-    static constexpr uint8_t kBtmB{param_kBtmB};
+    static constexpr uint8_t kB{tparam_kB};
+    static constexpr uint8_t kBtmB{tparam_kBtmB};
     using BTreeNodeT = BTreeNode<kB>;
 
-    static constexpr size_t kUnitBits{kBtmB * 8};
+    static constexpr size_t kUnitBits{kBtmB * 4};
     static constexpr bool kM{0};
     static constexpr bool kS{1};
 
