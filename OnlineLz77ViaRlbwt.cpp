@@ -26,9 +26,6 @@
 using namespace itmmti;
 using SizeT = uint32_t; // Text length should fit in SizeT.
 
-//
-// $ ./LZ77ViaOnlineRlbwt -i inputfilename -o outputfilename
-//
 int main(int argc, char *argv[])
 {
   cmdline::parser parser;
@@ -43,21 +40,20 @@ int main(int argc, char *argv[])
   const bool verbose = parser.get<bool>("verbose");
 
   auto t1 = std::chrono::high_resolution_clock::now();
+  std::cout << "LZ77 Parsing ..." << std::endl;
 
   std::ifstream ifs(in);
   std::ofstream ofs(out);
 
   const size_t step = 1000000; // Print status every step characters.
   size_t last_step = 0;
-  std::cout << "LZ77 Parsing ..." << std::endl;
-
 
   using BTreeNodeT = BTreeNode<32>;
   using BtmNodeMT = BtmNodeM_StepCode<BTreeNodeT, 32>;
   using BtmMInfoT = BtmMInfo_BlockVec<BtmNodeMT, 512>;
   using BtmNodeST = BtmNodeS<BTreeNodeT, uint32_t, 8>;
   using BtmSInfoT = BtmSInfo_BlockVec<BtmNodeST, 1024>;
-  using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, WBitsBlockVec<1024>, BtmMInfoT, BtmSInfoT>;
+  using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, Samples_WBitsBlockVec<1024>, BtmMInfoT, BtmSInfoT>;
   OnlineLz77ViaRlbwt<DynRleT> rlbwt(1);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
@@ -81,7 +77,6 @@ int main(int argc, char *argv[])
         // {//debug
         //   std::ifstream ifssss(in);
         //   if (!(rlbwt.checkDecompress(ifssss))) {
-        //     std::cerr << "bad at pos = " << pos << std::endl;
         //     exit(1);
         //   }
         // }
@@ -119,7 +114,6 @@ int main(int argc, char *argv[])
     //     {//debug check if text can be decompressed correctly from rlbwt
     //       std::ifstream ifssss(in);
     //       if (!(rlbwt.checkDecompress(ifssss))) {
-    //         std::cerr << "bad at pos = " << pos << std::endl;
     //         exit(1);
     //       }
     //     }
@@ -145,7 +139,7 @@ int main(int argc, char *argv[])
   double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
   std::cout << "LZ compression done. " << sec << " sec" << std::endl;
   std::cout << "Number of factors z = " << z << std::endl;
-  rlbwt.printStatictics(std::cout);
+  rlbwt.printStatictics(std::cout, false);
 
   return 0;
 }

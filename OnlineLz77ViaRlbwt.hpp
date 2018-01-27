@@ -15,10 +15,8 @@
 
 #include <stdint.h>
 #include <cassert>
-#include <ostream>
+#include <iostream>
 #include <fstream>
-
-#include "BTree.hpp"
 
 namespace itmmti 
 {
@@ -26,7 +24,7 @@ namespace itmmti
   using bwttracker = std::tuple<uint64_t, uint64_t, uint64_t>;
 
   /*!
-   * @brief Online Run-length encoded Burrows–Wheeler transform (RLBWT).
+   * @brief Online LZ77 computation via online RLBWT.
    * @note
    *   ::OnlineRlbwt wraps ::DynRLE to use it for representing dynamic RLE of BWT.
    *   In contrast to ::DynRle, OnlineRLWT has an implicit end marker (em_) at emPos_.
@@ -35,7 +33,9 @@ namespace itmmti
   class OnlineLz77ViaRlbwt
   {
   public:
+    using CharT = typename DynRle::CharT;
     using BTreeNodeT = typename DynRle::BTreeNodeT;
+    static constexpr uintptr_t NOTFOUND{BTreeNodeT::NOTFOUND};
     static constexpr uint8_t kB{DynRle::kB};
     static constexpr uint8_t kBtmBM{DynRle::kBtmBM};
     static constexpr uint8_t kBtmBS{DynRle::kBtmBS};
@@ -44,28 +44,28 @@ namespace itmmti
   private:
     DynRle drle_;
     uint64_t emPos_; //!< Current position (0base) of end marker.
-    uint64_t em_; //!< End marker. It is used only when bwt[emPos_] is accessed (and does not matter if em_ appears in the input text).
     uint64_t succSamplePos_; //!< Tracking txt-pos (0base) for bwt-position next to current emPos_.
+    CharT em_; //!< End marker. It is used only when bwt[emPos_] is accessed (and does not matter if em_ appears in the input text).
 
 
   public:
     OnlineLz77ViaRlbwt
     (
      const size_t initNumBtms, //!< Initial size of DynRle to reserve.
-     const uint64_t initSampleUb = 256,
-     uint64_t em = UINT64_MAX //!< End marker (default UINT64_MAX).
+     const uint64_t initSampleUb = 256, //!< Initial upper bound of sample positions.
+     CharT em = 0 //!< End marker (default UINT64_MAX).
      ) :
       drle_(initNumBtms, initSampleUb),
       emPos_(0),
-      em_(em),
-      succSamplePos_(0)
+      succSamplePos_(0),
+      em_(em)
     {}
 
 
     /*!
      * @brief Get end marker.
      */
-    uint64_t getEm() const noexcept {
+    CharT getEm() const noexcept {
       return em_;
     }
 
@@ -75,6 +75,14 @@ namespace itmmti
      */
     uint64_t getEndmarkerPos() const noexcept {
       return emPos_;
+    }
+
+
+    /*!
+     * @brief Return current length including end marker.
+     */
+    uint64_t getLenWithEndmarker() const noexcept {
+      return drle_.getSumOfWeight() + 1; // +1 for end marker, which is not in drle_.
     }
 
 
@@ -103,11 +111,11 @@ namespace itmmti
 
 
     /*!
-     * @brief Extend RLBWT by appending one while maintaining sample pos for leftend of each run.
+     * @brief Extend RLBWT by appending one character while maintaining sample pos for leftend of each run.
      */
     void extend
     (
-     const uint64_t ch //!< 64bit-char to append.
+     const CharT ch //!< 64bit-char to append.
      ) {
       const uint64_t txtPos = drle_.getSumOfWeight(); //!< Txt-position of "ch" (0base).
       {
@@ -181,19 +189,11 @@ namespace itmmti
 
 
     /*!
-     * @brief Return current length including end marker.
-     */
-    uint64_t getLenWithEndmarker() const noexcept {
-      return drle_.getSumOfWeight() + 1; // +1 for end marker, which is not in drle_.
-    }
-
-
-    /*!
      * @brief Return 'rank of ch at pos' + 'num of total occ of characters smaller than ch'.
      */
     uint64_t totalRank
     (
-     uint64_t ch,
+     const CharT ch,
      uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEndmarker()].
      ) const noexcept {
       assert(pos < getLenWithEndmarker());
@@ -212,7 +212,7 @@ namespace itmmti
     bool lfMap
     (
      bwttracker & tracker,
-     const uint64_t ch
+     const CharT ch
      ) const noexcept {
       // {//debug
       //   std::cerr << __func__ << ": ch = " << ch << ", tracker = {" << std::get<0>(tracker) << ", " << std::get<1>(tracker) << ", " << std::get<2>(tracker) << "}" << std::endl;
@@ -285,7 +285,7 @@ namespace itmmti
     bwtintvl lfMap
     (
      const bwtintvl intvl,
-     const uint64_t ch
+     const CharT ch
      ) const noexcept {
       assert(intvl.first <= getLenWithEndmarker() && intvl.second <= getLenWithEndmarker());
 
@@ -317,7 +317,7 @@ namespace itmmti
         --i;
       }
       const uint64_t idxM = drle_.searchPosM(i);
-      const unsigned char ch = drle_.getCharFromIdxM(idxM);
+      const auto ch = drle_.getCharFromIdxM(idxM);
       return drle_.rank(ch, idxM, i, true);
     }
 
@@ -335,8 +335,8 @@ namespace itmmti
           --pos;
         }
         const uint64_t idxM = drle_.searchPosM(pos);
-        const unsigned char ch = drle_.getCharFromIdxM(idxM);
-        ofs.put(ch);
+        const auto ch = drle_.getCharFromIdxM(idxM);
+        ofs.put(static_cast<unsigned char>(ch));
         pos = drle_.rank(ch, idxM, pos, true);
       }
     }
@@ -357,18 +357,27 @@ namespace itmmti
 
 
     /*!
-     * @brief Print statistics of ::DynRLE (not of ::OnlineRLBWT).
+     * @brief Print statistics
      */
     void printStatictics
     (
-     std::ostream & os //!< std::ostream (e.g., std::cout).
+     std::ostream & os, //!< std::ostream (e.g., std::cout).
+     const bool verbose
      ) const noexcept {
-      drle_.printStatictics(os);
+      os << "OnlineLz77ViaRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
+      os << "Len with endmarker = " << getLenWithEndmarker() << std::endl;
+      os << "emPos_ = " << emPos_ << ", succSamplePos_ = " << succSamplePos_ << ", em_ = " << em_ << std::endl;
+      drle_.printStatictics(os, verbose);
+      os << "OnlineLz77ViaRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
     }
 
 
-    void printDebugInfo(std::ostream & os) const noexcept {
-      os <<  "emPos_ = " << emPos_ << ", em_ = " << em_ << ", succSamplePos_ = " << succSamplePos_ << std::endl;
+    void printDebugInfo
+    (
+     std::ostream & os //!< std::ostream (e.g., std::cout).
+     ) const noexcept {
+      os << "Len with endmarker = " << getLenWithEndmarker() << std::endl;
+      os << "emPos_ = " << emPos_ << ", succSamplePos_ = " << succSamplePos_ << ", em_ = " << em_ << std::endl;
       drle_.printDebugInfo(os);
     }
 
@@ -388,7 +397,7 @@ namespace itmmti
         }
         // std::cout << "T[" << i << "] searchPos(" << pos << ") ";
         const uint64_t idxM = drle_.searchPosM(pos);
-        const unsigned char ch = drle_.getCharFromIdxM(idxM);
+        const auto ch = static_cast<unsigned char>(drle_.getCharFromIdxM(idxM));
         // std::cout << "idxM = " << idxM << ", pos = " << pos << ", ch = " << (int)ch << "(" << ch << ")" << std::endl;
         char c; // Assume that the input character fits in char.
         ifs.get(c);
