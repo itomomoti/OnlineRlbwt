@@ -37,22 +37,23 @@ namespace itmmti
   public:
     using BTreeNodeT = typename DynRle::BTreeNodeT;
     static constexpr uint8_t kB{DynRle::kB};
-    static constexpr uint8_t kBtmB{DynRle::kBtmB};
+    static constexpr uint8_t kBtmBM{DynRle::kBtmBM};
+    static constexpr uint8_t kBtmBS{DynRle::kBtmBS};
 
 
   private:
     DynRle drle_;
     uint64_t emPos_; //!< Current position (0base) of end marker.
-    uint64_t em_; //!< End marker that should not appear in the input text.
-    uint64_t succSamplePos_; // Tracking txt-pos (0base) for bwt-position next to current emPos_.
+    uint64_t em_; //!< End marker. It is used only when bwt[emPos_] is accessed (and does not matter if em_ appears in the input text).
+    uint64_t succSamplePos_; //!< Tracking txt-pos (0base) for bwt-position next to current emPos_.
 
 
   public:
     OnlineLz77ViaRlbwt
     (
-     const size_t initNumBtms, //!< Give initial size of DynRle to reserve.
+     const size_t initNumBtms, //!< Initial size of DynRle to reserve.
      const uint64_t initSampleUb = 256,
-     uint64_t em = UINT64_MAX //!< Give end marker (default UINT64_MAX).
+     uint64_t em = UINT64_MAX //!< End marker (default UINT64_MAX).
      ) :
       drle_(initNumBtms, initSampleUb),
       emPos_(0),
@@ -109,8 +110,11 @@ namespace itmmti
      const uint64_t ch //!< 64bit-char to append.
      ) {
       const uint64_t txtPos = drle_.getSumOfWeight(); //!< Txt-position of "ch" (0base).
-      if (txtPos >= drle_.getSampleUb()) {
-        drle_.increaseWOfSample(txtPos);
+      {
+        const auto sampleUb = drle_.getSampleUb();
+        if (sampleUb && txtPos >= sampleUb) {
+          drle_.increaseSampleUb(txtPos + 1);
+        }
       }
 
       uint64_t idxM;
@@ -148,9 +152,9 @@ namespace itmmti
           /* Take the smallest character larger "next_ch" than "ch".
              If such character exists, set "succSamplePos_" to the
              sampled position for the first BWT-run of "next_ch" minus one. */
-          const auto nextRootS = drle_.getNextRootS(drle_.getParentFromBtmS(idxS / kBtmB));
+          const auto nextRootS = drle_.getNextRootS(drle_.getParentFromBtmS(idxS / kBtmBS));
           if (reinterpret_cast<uintptr_t>(nextRootS) != BTreeNodeT::NOTFOUND) {
-            succSamplePos_ = drle_.getSampleFromIdxS(reinterpret_cast<uint64_t>(nextRootS->getLmBtm_DirectJump()) * kBtmB + 1) + 1;
+            succSamplePos_ = drle_.getSampleFromIdxS(reinterpret_cast<uint64_t>(nextRootS->getLmBtm_DirectJump()) * kBtmBS + 1) + 1;
           }
         }
       }
@@ -216,7 +220,7 @@ namespace itmmti
       assert(std::get<0>(tracker) <= getLenWithEndmarker() && std::get<1>(tracker) <= getLenWithEndmarker());
       assert(std::get<0>(tracker) < std::get<1>(tracker));
 
-      // If "ch" is not in the alphabet or empty interval, return empty interval.
+      //// If "ch" is not in the alphabet or empty interval, return empty interval.
       const auto * retRootS = drle_.searchCharA(ch);
       if (retRootS->isDummy() || drle_.getCharFromNodeS(retRootS) != ch) {
         return false;
@@ -243,10 +247,10 @@ namespace itmmti
           idxS = drle_.idxM2S(idxM);
         } else {
           l_in_drle = 0;
-          idxS = drle_.getPredIdxSFromIdxM(retRootS, ch, idxM); // We know that "ch" already exists by "r_in_dre > 1".
+          idxS = drle_.calcPredIdxSFromIdxM(retRootS, ch, idxM); // We know that "ch" already exists by "r_in_dre > 1".
         }
-        const auto btmS = idxS / kBtmB;
-        for (auto tmpIdxS = btmS * kBtmB; tmpIdxS < idxS + (ch != chNow); ++tmpIdxS) {
+        const auto btmS = idxS / kBtmBS;
+        for (auto tmpIdxS = btmS * kBtmBS; tmpIdxS < idxS + (ch != chNow); ++tmpIdxS) {
           l_in_drle += drle_.getWeightFromIdxS(tmpIdxS);
         }
         BTreeNodeT * rootS;
@@ -285,7 +289,7 @@ namespace itmmti
      ) const noexcept {
       assert(intvl.first <= getLenWithEndmarker() && intvl.second <= getLenWithEndmarker());
 
-      // If "ch" is not in the alphabet or empty interval, return empty interval.
+      //// If "ch" is not in the alphabet or empty interval, return empty interval.
       const auto * retRootS = drle_.searchCharA(ch);
       if (retRootS->isDummy() || drle_.getCharFromNodeS(retRootS) != ch || intvl.first >= intvl.second) {
         return {0, 0};
@@ -294,8 +298,8 @@ namespace itmmti
       uint64_t l = intvl.first - (intvl.first > emPos_);
       uint64_t r = intvl.second - (intvl.second > emPos_);
       const uint64_t idxM = drle_.searchPosM(l); // l is modified to relative pos.
-      // +1 because in F.select(0, ch) we are not taking into account the end-marker,
-      // which is in position 0 but not explicitly stored in F.
+      //// +1 because in F.select(0, ch) we are not taking into account the end-marker,
+      //// which is in position 0 but not explicitly stored in F.
       return {
         drle_.rank(ch, idxM, l, true) - (drle_.getCharFromIdxM(idxM) == ch) + 1,
           drle_.rank(ch, r-1, true) + 1
@@ -319,31 +323,6 @@ namespace itmmti
 
 
     /*!
-     * @brief Print statistics of ::DynRLE (not of ::OnlineRLBWT).
-     */
-    void printStatictics
-    (
-     std::ostream & os //!< std::ostream (e.g., std::cout).
-     ) const noexcept {
-      drle_.printStatictics(os);
-    }
-
-
-    void printDebugInfo(std::ostream & os) const noexcept {
-      os <<  "emPos_ = " << emPos_ << ", em_ = " << em_ << ", succSamplePos_ = " << succSamplePos_ << std::endl;
-      drle_.printDebugInfo(os);
-    }
-
-
-    /*!
-     * @brief Calculate total memory usage in bytes.
-     */
-    size_t calcMemBytes() const noexcept {
-      return sizeof(*this) + drle_.calcMemBytes();
-    }
-
-
-    /*!
      * @brief Output original text to std::ofstream.
      */
     void invert
@@ -363,7 +342,38 @@ namespace itmmti
     }
 
 
-    void checkDecompress
+    //////////////////////////////// statistics
+    /*!
+     * @brief Calculate total memory usage in bytes.
+     */
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      size += drle_.calcMemBytes();
+      return size;
+    }
+
+
+    /*!
+     * @brief Print statistics of ::DynRLE (not of ::OnlineRLBWT).
+     */
+    void printStatictics
+    (
+     std::ostream & os //!< std::ostream (e.g., std::cout).
+     ) const noexcept {
+      drle_.printStatictics(os);
+    }
+
+
+    void printDebugInfo(std::ostream & os) const noexcept {
+      os <<  "emPos_ = " << emPos_ << ", em_ = " << em_ << ", succSamplePos_ = " << succSamplePos_ << std::endl;
+      drle_.printDebugInfo(os);
+    }
+
+
+    bool checkDecompress
     (
      std::ifstream & ifs
      ) const noexcept {
@@ -385,11 +395,11 @@ namespace itmmti
         unsigned char uc = static_cast<unsigned char>(c);
         if (uc != ch) {
           std::cerr << "error: bad expansion at i = " << i << ", (" << ch << ") should be (" << uc << ")" << ", idxM = " << idxM << ", pos = " << pos << std::endl;
-          return;
+          return false;
         }
         pos = drle_.rank(ch, idxM, pos, true);
       }
-      std::cerr << "correctly decompressed" << std::endl;
+      return true;
     }
   };
 };

@@ -51,7 +51,14 @@ int main(int argc, char *argv[])
   size_t last_step = 0;
   std::cout << "LZ77 Parsing ..." << std::endl;
 
-  OnlineLz77ViaRlbwt<DynRleForRlbwt<32, 32> > rlbwt(128);
+
+  using BTreeNodeT = BTreeNode<32>;
+  using BtmNodeMT = BtmNodeM_StepCode<BTreeNodeT, 32>;
+  using BtmMInfoT = BtmMInfo_BlockVec<BtmNodeMT, 512>;
+  using BtmNodeST = BtmNodeS<BTreeNodeT, uint32_t, 8>;
+  using BtmSInfoT = BtmSInfo_BlockVec<BtmNodeST, 1024>;
+  using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, WBitsBlockVec<1024>, BtmMInfoT, BtmSInfoT>;
+  OnlineLz77ViaRlbwt<DynRleT> rlbwt(1);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   SizeT z = 0; // LZ phrase counter
@@ -59,28 +66,24 @@ int main(int argc, char *argv[])
   char c; // Assume that the input character fits in char.
   unsigned char uc;
 
-  // {//test
-  //   if (reinterpret_cast<void *>(0) == nullptr) {
-  //     std::cout << "a" << std::endl;
-  //   } else {
-  //     std::cout << "b" << std::endl;
-  //   }
-  //   return 0;
-  // }
-
   while (ifs.peek() != std::ios::traits_type::eof()) {
     ifs.get(c);
     uc = static_cast<unsigned char>(c);
     if (verbose) {
-      // std::cout << pos << ": z = " << z << ", l = " << l << ", ref = " << std::get<2>(tracker) - l << ", succ = " << rlbwt.getSuccSamplePos()
-      //           << ", tracker = (" << std::get<0>(tracker) << ", " << std::get<1>(tracker) << ", " << std::get<2>(tracker) << "), "
-      //           << "insert " << (int)c << "(" << c << ")" << " at " << rlbwt.getEndmarkerPos() << std::endl;
+      // if (pos >= 0) {
+      //   std::cout << pos << ": z = " << z << ", l = " << l << ", ref = " << std::get<2>(tracker) - l << ", succ = " << rlbwt.getSuccSamplePos()
+      //             << ", tracker = (" << std::get<0>(tracker) << ", " << std::get<1>(tracker) << ", " << std::get<2>(tracker) << "), "
+      //             << "insert " << (int)c << "(" << c << ")" << " at " << rlbwt.getEndmarkerPos() << std::endl;
+      // }
       if (pos > last_step + (step - 1)) {
         last_step = pos;
         std::cout << " " << pos << " characters processed ..." << std::endl;
-        // {//debug check if text can be decompressed correctly from rlbwt
+        // {//debug
         //   std::ifstream ifssss(in);
-        //   rlbwt.checkDecompress(ifssss);
+        //   if (!(rlbwt.checkDecompress(ifssss))) {
+        //     std::cerr << "bad at pos = " << pos << std::endl;
+        //     exit(1);
+        //   }
         // }
       }
     }
@@ -89,7 +92,7 @@ int main(int argc, char *argv[])
       ++l;
       ++(std::get<1>(tracker)); // New suffix falls inside range
     } else { // Extension failed: End of an LZ factor.
-      // Output an LZ factor.
+      //// Output an LZ factor.
       ++z;
       SizeT beg = static_cast<SizeT>(std::get<2>(tracker) - l);
       ofs.write(reinterpret_cast<char *>(&beg), sizeof(SizeT));
@@ -98,7 +101,7 @@ int main(int argc, char *argv[])
       // if (verbose) {
       //   std::cout << "LZ[" << z << "] = (" << beg << ", " << l << ", " << c << ")" << std::endl;
       // }
-      // Reset variables.
+      //// Reset variables.
       l = 0;
       tracker = {0, rlbwt.getLenWithEndmarker() + 1, 0}; // +1 because we have not inserted "ch".
     }
@@ -109,19 +112,19 @@ int main(int argc, char *argv[])
       std::get<2>(tracker) = rlbwt.getSuccSamplePos();
     }
 
-    if (verbose) {
-      // if (pos >= 677) {
-      //   std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
-      //   rlbwt.printDebugInfo(std::cout);
-      //   {//debug check if text can be decompressed correctly from rlbwt
-      //     std::ifstream ifssss(in);
-      //     rlbwt.checkDecompress(ifssss);
-      //   }
-      // }
-      // if (pos > 680) {
-      //   exit(1);
-      // }
-    }
+    // if (verbose) {
+    //   if (pos >= 5544) {
+    //     std::cout << "Status after inserting pos = " << pos - 1 << std::endl;
+    //     rlbwt.printDebugInfo(std::cout);
+    //     {//debug check if text can be decompressed correctly from rlbwt
+    //       std::ifstream ifssss(in);
+    //       if (!(rlbwt.checkDecompress(ifssss))) {
+    //         std::cerr << "bad at pos = " << pos << std::endl;
+    //         exit(1);
+    //       }
+    //     }
+    //   }
+    // }
   }
   if (l) {
     ++z;
