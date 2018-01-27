@@ -4,89 +4,103 @@
  * This program is released under the MIT License.
  * http://opensource.org/licenses/mit-license.php
  */
-#define RLBWT_TEST
-#ifdef RLBWT_TEST
+/*!
+ * @file OnlineRlbwt.cpp
+ * @brief Online RLBWT construction.
+ * @author Tomohiro I
+ * @date 2018-01-27
+ */
+#include <stdint.h>
+
 #include <time.h>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
 
 #include "cmdline.h"
-#include "DynRLE.hpp"
-#include "OnlineRLBWT.hpp"
+#include "OnlineRlbwt.hpp"
+#include "DynRleForRlbwt.hpp"
 
 
-//
-// $ ./DynRLBWT.out -i inputfilename -o outputfilename
-//
+using namespace itmmti;
+
 int main(int argc, char *argv[])
 {
   cmdline::parser parser;
   parser.add<std::string>("input",'i', "input file name", true);
-  parser.add<std::string>("output",'o', "output file name", true);
+  parser.add<std::string>("output",'o', "output file name", false);
+  parser.add<bool>("check", 0, "check correctness", false, 0);
+  parser.add<bool>("verbose", 'v', "verbose", false, 0);
   parser.add("help", 0, "print help");
 
   parser.parse_check(argc, argv);
   const std::string in = parser.get<std::string>("input");
   const std::string out = parser.get<std::string>("output");
+  const bool check = parser.get<bool>("check");
+  const bool verbose = parser.get<bool>("verbose");
 
   auto t1 = std::chrono::high_resolution_clock::now();
+  std::cout << "Building RLBWT ..." << std::endl;
 
 	std::ifstream ifs(in);
-	std::ofstream ofs(out);
 
   size_t j = 0;
   const size_t step = 1000000;	//print status every step characters
   long int last_step = 0;
 
-  std::cout << "Building RLBWT ..." << std::endl;
+  using BTreeNodeT = BTreeNode<32>;
+  using BtmNodeMT = BtmNodeM_StepCode<BTreeNodeT, 32>;
+  using BtmMInfoT = BtmMInfo_BlockVec<BtmNodeMT, 512>;
+  using BtmNodeST = BtmNodeS<BTreeNodeT, uint32_t, 8>;
+  using BtmSInfoT = BtmSInfo_BlockVec<BtmNodeST, 1024>;
+  using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, Samples_Null, BtmMInfoT, BtmSInfoT>;
+  OnlineRlbwt<DynRleT> rlbwt(1);
 
-  OnlineRLBWT<DynRLE<32> > rlbwt(16);
+  char c; // Assume that the input character fits in char.
+  unsigned char uc;
 
-  { // construct
-    char c;
-    while (ifs.get(c)) {
+  while (ifs.peek() != std::ios::traits_type::eof()) {
+    ifs.get(c);
+    uc = static_cast<unsigned char>(c);
+    if (verbose) {
       if(j > last_step + (step - 1)){
         last_step = j;
         std::cout << " " << j << " characters processed ..." << std::endl;
       }
+    }
 
-      rlbwt.extend(uint8_t(c));
-      ++j;
+    rlbwt.extend(uint8_t(c));
+    ++j;
+  }
+
+  ifs.close();
+  {
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
+    std::cout << "RLBWT construction done. " << sec << " sec" << std::endl;
+  }
+
+  rlbwt.printStatictics(std::cout, false);
+
+  if (!(out.empty())) {
+    t1 = std::chrono::high_resolution_clock::now();
+    std::cout << "Decompressing RLBWT ..." << std::endl;
+    std::ofstream ofs(out, std::ios::out);
+    rlbwt.invert(ofs);
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
+    std::cout << "RLBWT decompression done. " << sec << " sec" << std::endl;
+  }
+
+  if (check) { // check correctness
+    t1 = std::chrono::high_resolution_clock::now();
+    std::cout << "Checking RLBWT inversion ..." << std::endl;
+    std::ifstream ifssss(in);
+    if (!(rlbwt.checkDecompress(ifssss))) {
+      std::cout << "RLBWT inversion failed." << std::endl;
     }
     auto t2 = std::chrono::high_resolution_clock::now();
     double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
-    std::cout << "construct done. " << sec << " sec" << std::endl;
-    rlbwt.printStatictics(std::cout);
+    std::cout << "RLBWT decompressed correctly. " << sec << " sec" << std::endl;
   }
-
-
-  // { // 
-  //   for (size_t i = 0; i < rlbwt.getLenWithTerminator(); ++i) {
-  //     uint64_t pos = i;
-  //     uint64_t idxM = rlbwt.searchPosM(pos);
-  //     char c = rlbwt.getCharFromIdxM(idxM);
-  //     ofs.put(c);
-  //   }
-  // }
-
-  { // inverse
-    rlbwt.invert(ofs);
-  }
-
-  auto t2 = std::chrono::high_resolution_clock::now();
-
-  ifs.close();
-  ofs.close();
-
-  double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
-  std::cout << "construct and string inversion done. " << sec << " sec" << std::endl;
-  rlbwt.printStatictics(std::cout);
-
-	size_t bitsize = rlbwt.calcMemBytes() * 8;
-  std::cout << " Size of the structures (bits): " << bitsize << std::endl;
-  std::cout << " Size of the structures (Bytes): " << bitsize/8 << std::endl;
-  std::cout << " Size of the structures (KB): " << (bitsize/8)/1024 << std::endl;
-  std::cout << " Size of the structures (MB): " << ((bitsize/8)/1024)/1024 << std::endl;
 }
-#endif
