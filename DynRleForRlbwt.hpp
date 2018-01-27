@@ -6,7 +6,7 @@
  */
 /*!
  * @file DynRleForRlbwt.hpp
- * @brief Dynamic Run-length encoding with value.
+ * @brief Online RLBWT construction
  * @author Tomohiro I
  * @date 2017-12-16
  */
@@ -899,11 +899,13 @@ namespace itmmti
   private:
     //// Private member variables.
     WBitsBlockVec<tparam_kBlockSize> vec_;
+    uint64_t sampleUb_; //!< current sample upper bound (exclusive). Sample pos (0base) must be less than "sampleUb_". If 0, it means samples are not used.
 
 
   public:
     Samples_WBitsBlockVec() :
-      vec_()
+      vec_(),
+      sampleUb_(0)
     {}
 
 
@@ -911,11 +913,77 @@ namespace itmmti
     {}
 
 
+    void clearAll() {
+      vec_.clearAll();
+    }
+
+
+    uint64_t getSampleUb() const noexcept {
+      return sampleUb_;
+    }
+
+
     void resize
     (
      size_t newSize
      ) noexcept {
       vec_.resize(newSize);
+    }
+
+
+    /*!
+     * @brief write sample
+     */
+    uint64_t read
+    (
+     const uint64_t idx
+     ) const noexcept {
+      return vec_.read(idx);
+    }
+
+
+    /*!
+     * @brief write sample
+     */
+    void write
+    (
+     const uint64_t newSample,
+     const uint64_t idx
+     ) noexcept {
+      vec_.write(newSample, idx);
+    }
+
+
+    void increaseSampleUb
+    (
+     const uint64_t sampleUb
+     ) {
+      // {// debug
+      //   std::cerr << __func__ << ": minSupportSampleVal = " << minSupportSampleVal << std::endl;
+      // }
+      const uint8_t newW = bits::bitSize(sampleUb - 1);
+      if (newW > vec_.getW()) {
+        vec_.increaseW(newW);
+        sampleUb_ = UINT64_C(1) << newW;
+      }
+    }
+
+
+    void mvSamples
+    (
+     const uint64_t srcIdx,
+     const uint64_t tgtIdx,
+     const uint8_t num
+     ) noexcept {
+      if (srcIdx >= tgtIdx) {
+        for (uint8_t i = 0; i < num; ++i) {
+          vec_.write(vec_.read(srcIdx + i), tgtIdx + i);
+        }
+      } else {
+        for (uint8_t i = num - 1; i != UINT8_MAX; --i) {
+          vec_.write(vec_.read(srcIdx + i), tgtIdx + i);
+        }
+      }
     }
 
 
@@ -927,6 +995,92 @@ namespace itmmti
       size_t size = sizeof(*this) * includeThis;
       size += vec_.calcMemBytes(false);
       return size;
+    }
+
+
+    size_t calcMemBytes_used() const noexcept {
+      return (vec_.getW() * vec_.size()) / 8;
+    }
+  };
+
+
+  ////////////////////////////////////////////////////////////////
+  class Samples_Null
+  {
+  public:
+    Samples_Null()
+    {}
+
+
+    ~Samples_Null()
+    {}
+
+
+    void clearAll() {
+    }
+
+
+    uint64_t getSampleUb() const noexcept {
+      return 0;
+    }
+
+
+    void resize
+    (
+     size_t newSize
+     ) noexcept {
+    }
+
+
+    /*!
+     * @brief write sample
+     */
+    uint64_t read
+    (
+     const uint64_t idx
+     ) const noexcept {
+      return 0;
+    }
+
+
+    /*!
+     * @brief write sample
+     */
+    void write
+    (
+     const uint64_t newSample,
+     const uint64_t idx
+     ) noexcept {
+    }
+
+
+    void increaseSampleUb
+    (
+     const uint64_t sampleUb
+     ) {
+    }
+
+
+    void mvSamples
+    (
+     const uint64_t srcIdx,
+     const uint64_t tgtIdx,
+     const uint8_t num
+     ) noexcept {
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      return 0;
+    }
+
+
+    size_t calcMemBytes_used() const noexcept {
+      return 0;
     }
   };
 
@@ -975,7 +1129,6 @@ namespace itmmti
     BtmSInfoT btmSInfo_; //!< Storing information on STree
     // Sample positions
     SamplesT samples_; //!< Information on sample positions associated to leaves of MTree
-    uint64_t sampleUb_; //!< current sample upper bound (exclusive). Sample pos (0base) must be less than "sampleUb_". If 0, it means samples are not used.
 
     uint8_t traCode_; //!< traCode in [9..16).
 
@@ -1028,9 +1181,7 @@ namespace itmmti
       idxS2M_.decreaseW(1);
       idxS2M_.increaseW(8);
       idxS2M_.reserve(initNumBtms * kBtmBS);
-      if (initSampleUb) {
-        increaseSampleUb(initSampleUb);
-      }
+      samples_.increaseSampleUb(initSampleUb);
 
       srootM_.setRoot(new BTreeNodeT(reinterpret_cast<void *>(0), true, true, true, true));
       srootM_.root_->putFirstBtm(reinterpret_cast<void *>(0), 0);
@@ -1086,16 +1237,12 @@ namespace itmmti
       // {// debug
       //   std::cerr << __func__ << ": minSupportSampleVal = " << minSupportSampleVal << std::endl;
       // }
-      const uint8_t newW = bits::bitSize(sampleUb - 1);
-      if (newW > samples_.getW()) {
-        samples_.increaseW(newW);
-        sampleUb_ = UINT64_C(1) << newW;
-      }
+      samples_.increaseSampleUb(sampleUb);
     }
 
 
     uint64_t getSampleUb() const noexcept {
-      return sampleUb_;
+      return samples_.getSampleUb();
     }
 
 
@@ -2229,24 +2376,6 @@ namespace itmmti
     }
 
 
-    void mvSamples
-    (
-     const uint64_t srcIdx,
-     const uint64_t tgtIdx,
-     const uint8_t num
-     ) noexcept {
-      if (srcIdx >= tgtIdx) {
-        for (uint8_t i = 0; i < num; ++i) {
-          samples_.write(samples_.read(srcIdx + i), tgtIdx + i);
-        }
-      } else {
-        for (uint8_t i = num - 1; i != UINT8_MAX; --i) {
-          samples_.write(samples_.read(srcIdx + i), tgtIdx + i);
-        }
-      }
-    }
-
-
     uint64_t setNewBtmNodeM() {
       const uint64_t retBtmIdx = getNumBtmM();
       const uint64_t newIdxSize = (retBtmIdx + 1) * kBtmBM;
@@ -2333,7 +2462,7 @@ namespace itmmti
         btmNodeM.stcc_.mvWCodes(btmNodeM.stcc_.getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, tailNum);
         //// Assume for simplicity that numChild_ins > numChild_del, and thus call mvIdxRL
         mvIdxRL(idxM2S_, idxM + numChild_del, idxM + numChild_ins, tailNum, idxS2M_);
-        mvSamples(idxM + numChild_del, idxM + numChild_ins, tailNum);
+        samples_.mvSamples(idxM + numChild_del, idxM + numChild_ins, tailNum);
       }
       btmNodeM.stcc_.mvWCodes(srcWCodes, 0, childIdx, numChild_ins);
       btmNodeM.numChildren_ += numChild_ins - numChild_del;
@@ -2389,7 +2518,7 @@ namespace itmmti
           sumWL += w;
           lnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), 0, numL, num);
           mvIdxLR(idxM2S_, rIdxBase, lIdxBase + numL, num, idxS2M_);
-          mvSamples(rIdxBase, lIdxBase + numL, num);
+          samples_.mvSamples(rIdxBase, lIdxBase + numL, num);
           numL += num;
         }
       }
@@ -2404,7 +2533,7 @@ namespace itmmti
           sumWL += w;
           lnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), childIdx + numChild_del, numL, curNumAfterDel);
           mvIdxLR(idxM2S_, rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel, idxS2M_);
-          mvSamples(rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel);
+          samples_.mvSamples(rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel);
         }
       }
       lnode.numChildren_ = numL_new;
@@ -2430,7 +2559,7 @@ namespace itmmti
         changeList[clSize++] = {bitPos, 0, w};
         rnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), numToLeft, 0, num);
         mvIdxLR(idxM2S_, rIdxBase + numToLeft, rIdxBase, num, idxS2M_);
-        mvSamples(rIdxBase + numToLeft, rIdxBase, num);
+        samples_.mvSamples(rIdxBase + numToLeft, rIdxBase, num);
       }
       if (!isNewElemInL) {
         sumWR += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
@@ -2446,7 +2575,7 @@ namespace itmmti
           } else {
             mvIdxRL(idxM2S_, rIdxBase + srcBeg, rIdxBase + tgtBeg, num, idxS2M_);
           }
-          mvSamples(rIdxBase + srcBeg, rIdxBase + tgtBeg, num);
+          samples_.mvSamples(rIdxBase + srcBeg, rIdxBase + tgtBeg, num);
         }
         changeList[clSize++] = {bitPosOfLastChunk, sumWR - bitSizeOfLastChunk, bitSizeOfLastChunk};
       }
@@ -2511,7 +2640,7 @@ namespace itmmti
       if (numR_old) { // shift wCodes of R to make space
         rnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), 0, numToRight, numR_old);
         mvIdxRL(idxM2S_, rIdxBase, rIdxBase + numToRight, numR_old, idxS2M_);
-        mvSamples(rIdxBase, rIdxBase + numToRight, numR_old);
+        samples_.mvSamples(rIdxBase, rIdxBase + numToRight, numR_old);
       }
 
       uint8_t numR_increment = 0;
@@ -2523,7 +2652,7 @@ namespace itmmti
         sumWR_increment += w;
         rnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), childIdx - numToRight1, 0, numToRight1);
         mvIdxLR(idxM2S_, lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1, idxS2M_);
-        mvSamples(lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1);
+        samples_.mvSamples(lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1);
         numR_increment += numToRight1;
       }
       if (!isNewElemInL) {
@@ -2538,7 +2667,7 @@ namespace itmmti
         sumWR_increment += w;
         rnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), numL_old - numToRight2, numR_increment, numToRight2);
         mvIdxLR(idxM2S_, lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2, idxS2M_);
-        mvSamples(lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2);
+        samples_.mvSamples(lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2);
       }
       rnode.numChildren_ = numR_new;
       rnode.updateWCodesAuxM(0, numR_new);
@@ -2571,7 +2700,7 @@ namespace itmmti
           }
           lnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, numTail);
           mvIdxRL(idxM2S_, lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail, idxS2M_);
-          mvSamples(lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail);
+          samples_.mvSamples(lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail);
         } else {
           lnode.reserveBitCapacity(lnode.stccSize_);
         }
@@ -3238,7 +3367,7 @@ namespace itmmti
 
 
     size_t calcMemBytesSamples_used() const noexcept {
-      return (samples_.getW() * samples_.size()) / 8;
+      return samples_.calcMemBytes_used();
     }
 
 
@@ -3338,7 +3467,11 @@ namespace itmmti
     }
 
 
-    void printStatictics(std::ostream & os) const noexcept {
+    void printStatictics
+    (
+     std::ostream & os,
+     const bool verbose
+     ) const noexcept {
       if (isReady()) {
         const size_t totalLen = getSumOfWeight();
         const size_t numRuns = calcNumRuns();
@@ -3359,6 +3492,7 @@ namespace itmmti
         const size_t bytesWeights = calcMemBytesBtmWeights();
         const size_t bytesOverReserved = calcMemBytesOverReserved();
         const size_t totalBytes = calcMemBytes();
+        os << "DynRleForRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
         os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph() << std::endl;
         os << "BTreeNode arity kB = " << static_cast<uint64_t>(kB)
            << ", BtmNode arity kBtmBM = " << static_cast<uint64_t>(kBtmBM)
@@ -3400,6 +3534,7 @@ namespace itmmti
         os << "Over reserved: " << bytesOverReserved << " bytes = "
            << bytesOverReserved / 1024.0 << " KiB = "
            << bytesOverReserved / 1024.0 / 1024.0 << " MiB" << std::endl;
+        os << "DynRleForRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
       }
     }
 
