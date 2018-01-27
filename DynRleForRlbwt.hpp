@@ -24,6 +24,7 @@
 
 // include from Basics
 #include "BitsUtil.hpp"
+#include "WbitsBlockVec.hpp"
 #include "StepCode.hpp"
 #include "MemUtil.hpp"
 
@@ -34,9 +35,903 @@
 
 namespace itmmti
 {
-  template<uint8_t kB> class BTreeNode;
+  template<typename tparam_BTreeNodeT, uint8_t tparam_kBtmBM>
+  class BtmNodeM_StepCode
+  {
+  public:
+    static constexpr uint8_t kBtmBM{tparam_kBtmBM};
+    static constexpr size_t kUnitBits{kBtmBM * 4};
+    using BTreeNodeT = tparam_BTreeNodeT;
 
 
+    StepCodeCore<kBtmBM> stcc_; //!< Storing weights
+    uint64_t label_; //!< TRA label of btmM.
+    BTreeNodeT * parent_; //!< Pointer to parent of btmM.
+    uint16_t stccCapacity_; //!< Current bit capacity of stcc_
+    uint16_t stccSize_; //!< Current bit size of stcc_
+    uint8_t idxInSibling_; //!< idxInSibling of btmM.
+    uint8_t numChildren_; //!< Current size (number of elements).
+    uint8_t wCodesAuxM_[kBtmBM / StepCodeUtil::kWCNum - 1];
+
+
+    BtmNodeM_StepCode
+    (
+     uint16_t initStccCapacity = 0
+     ) :
+      stcc_(),
+      label_(0),
+      parent_(nullptr),
+      stccCapacity_(0),
+      stccSize_(0),
+      idxInSibling_(0),
+      numChildren_(0)
+    {
+      assert(initStccCapacity <= UINT16_MAX - 64);
+
+      reserveBitCapacity(initStccCapacity);
+    }
+
+
+    ~BtmNodeM_StepCode() {
+      // stcc_ is freed.
+    }
+
+
+    uint16_t getStccSize() const noexcept {
+      return stccSize_;
+    }
+
+
+    uint16_t getStccCapacity() const noexcept {
+      return stccCapacity_;
+    }
+
+
+    uint16_t getNumChildren() const noexcept {
+      return numChildren_;
+    }
+
+
+    uint16_t getIdxInSibling() const noexcept {
+      return idxInSibling_;
+    }
+
+
+    uint64_t getLabel() const noexcept {
+      return label_;
+    }
+
+
+    BTreeNodeT * getParent() const noexcept {
+      return parent_;
+    }
+
+
+    uint64_t readStccVal
+    (
+     const uint8_t idx //!< in [0..numChildren_)
+     ) const noexcept {
+      assert(idx < numChildren_);
+
+      return stcc_.read(idx);
+    }
+
+
+    uint64_t readWeight(uint8_t idx) const noexcept {
+      assert(idx < numChildren_);
+      uint64_t bitPos = calcBitPos(idx);
+      const auto w = stcc_.readW(idx);
+      return stcc_.readWBits(bitPos, w);
+    }
+
+
+    uint64_t calcSumOfWeight() const noexcept {
+      const auto & stcc = this->getConstRef_stcc();
+      const auto num = numChildren_;
+      uint64_t sum = 0;
+      uint64_t bitPos = 0;
+      for (uint64_t i = 0; i < num; ++i) {
+        const auto w = stcc.readW(i);
+        sum += stcc.readWBits(bitPos, w);
+        bitPos += w;
+      }
+
+      return sum;
+    }
+
+
+    uint64_t calcSumOfWeight
+    (
+     const uint8_t childIdx_beg,
+     const uint8_t childIdx_end
+     ) const noexcept {
+      assert(childIdx_beg <= childIdx_end);
+      assert(childIdx_end <= numChildren_);
+
+      const auto & stcc = this->getConstRef_stcc();
+      uint64_t bitPos = this->calcBitPos(childIdx_beg);
+      uint64_t sum = 0;
+      for (uint16_t i = childIdx_beg; i < childIdx_end; ++i) {
+        const auto w = stcc.readW(i);
+        sum += stcc.readWBits(bitPos, w);
+        bitPos += w;
+      }
+
+      return sum;
+    }
+
+
+    /*!
+     * @brief Return index (in btmM) corresponding to the run containing 'pos'-th character (0base).
+     * @attention 'pos' is modified to be the relative position (0base) from the beginning of the run.
+     */
+    uint64_t searchPos
+    (
+     uint64_t & pos //!< [in,out] Give position to search (< |T|). It is modified to relative position.
+     ) const noexcept {
+      const auto & stcc = this->getConstRef_stcc();
+      uint8_t i = 0;
+      uint64_t bitPos = 0;
+      while (true) {
+        const auto w = stcc.readW(i);
+        const auto weight = stcc.readWBits(bitPos, w);
+        if (pos < weight) {
+          return i;
+        }
+        ++i;
+        bitPos += w;
+        pos -= weight;
+      }
+    }
+
+
+    /*!
+     * @brief Calculate the beginning bit-pos of "idx"-th value in stcc_.
+     */
+    uint16_t calcBitPos
+    (
+     const uint8_t idx //!< in [0..numChildren_]
+     ) const noexcept {
+      assert(idx <= numChildren_);
+
+      if (idx < numChildren_) {
+        return static_cast<uint16_t>(stcc_.calcBitPos(idx, wCodesAuxM_));
+      } else {
+        return stccSize_;
+      }
+    }
+
+
+    /*!
+     * @brief Get read-only array pointer.
+     */
+    const StepCodeCore<kBtmBM> & getConstRef_stcc() const noexcept
+    {
+      return stcc_;
+    }
+
+
+    /*!
+     * @brief Get read-only array pointer.
+     */
+    const uint64_t * getConstPtr_vals() const noexcept
+    {
+      return stcc_.getConstPtr_vals();
+    }
+
+
+    /*!
+     * @brief Get read-only wCodes_ array pointer.
+     */
+    const uint64_t * getConstPtr_wCodes() const noexcept
+    {
+      return stcc_.getConstPtr_wCodes();
+    }
+
+
+    void setLabel
+    (
+     uint64_t newLabel
+     ) noexcept {
+      label_ = newLabel;
+    }
+
+
+    void reserveBitCapacity
+    (
+     uint16_t givenBitCapacity
+     ) {
+      if (givenBitCapacity > this->stccCapacity_) {
+        size_t newSize = (static_cast<size_t>(givenBitCapacity) / kUnitBits + 2) * kUnitBits;
+        this->stccCapacity_ = static_cast<uint16_t>(this->stcc_.setBitCapacity(static_cast<size_t>(givenBitCapacity)));
+      }
+    }
+
+
+    void shrinkBitCapacity() {
+      if (this->stccCapacity_ - this->stccSize_ > kUnitBits) {
+        this->stccCapacity_ = static_cast<uint16_t>(stcc_.setBitCapacity(static_cast<size_t>(this->stccSize_)));
+      }
+    }
+
+
+    void setParentRef
+    (
+     BTreeNodeT * newParent,
+     uint8_t newIdxInSibling
+     ) noexcept {
+      this->parent_ = newParent;
+      this->idxInSibling_ = newIdxInSibling;
+    }
+
+
+    /*!
+     * @brief Change "numChildren_" to "newSize".
+     */
+    void setNumChildren
+    (
+     const uint8_t newSize
+     ) noexcept {
+      assert(newSize <= kBtmBM);
+
+      numChildren_ = newSize;
+    }
+
+
+    /*!
+     * @brief update wCodesAuxM.
+     */
+    void updateWCodesAuxM
+    (
+     const uint16_t idxBeg,
+     const uint16_t idxEnd
+     ) noexcept {
+      assert(idxBeg < idxEnd);
+
+      const uint64_t beg = idxBeg / StepCodeUtil::kWCNum;
+      const uint64_t end = (idxEnd - 1) / StepCodeUtil::kWCNum + 1;
+      // std::cerr << __FUNCTION__ << ": " << idxBeg << "->" << beg << ", " << idxEnd << "->" << end << std::endl;
+      stcc_.updateWCodesAuxM(wCodesAuxM_, beg, end);
+    }
+
+
+    /*!
+     * @brief Replace values.
+     */
+    void replace
+    (
+     const uint64_t * newVals, //!< Storing stcc values that replace existing stcc values
+     const uint8_t num, //!< Number of elements to replace.
+     const uint8_t idx //!< in [0..numChildren_). Beginning idx of tgt.
+     ) {
+      assert(idx + num <= numChildren_);
+
+      const uint16_t bitPos0 = this->calcBitPos(idx);
+      uint16_t bitPos = bitPos0;
+      uint16_t sumW_ins = 0;
+      uint16_t sumW_del = 0;
+      for (uint16_t i = idx; i < idx + num; ++i) {
+        const uint8_t w_old = stcc_.readW(i);
+        const uint8_t w_new = StepCodeUtil::calcSteppedW(newVals[i - idx]);
+        sumW_del += w_old;
+        sumW_ins += w_new;
+        stcc_.writeWCode(StepCodeUtil::calcWCodeFromSteppedW(w_new), i);
+        bitPos += w_old;
+      }
+      this->updateWCodesAuxM(idx, idx + num);
+
+      if (sumW_ins != sumW_del) {
+        const uint16_t newStccSize = this->stccSize_ + sumW_ins - sumW_del;
+        if (newStccSize != this->stccSize_) {
+          this->reserveBitCapacity(newStccSize);
+          this->stcc_.mvVals(this->stcc_.getConstPtr_vals(), bitPos, bitPos0 + sumW_ins, this->stccSize_ - bitPos);
+        }
+        this->stccSize_ = newStccSize;
+      }
+      bitPos = bitPos0;
+      for (uint16_t i = idx; i < idx + num; ++i) {
+        uint8_t w = this->stcc_.readW(i);
+        this->stcc_.writeWBits(newVals[i - idx], bitPos, w);
+        bitPos += w;
+      }
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      return size + calcMemBytesStccDynArray();
+    }
+
+
+    size_t calcMemBytes_Weights() const noexcept {
+      size_t size = 0;
+      size += sizeof(stcc_);
+      size += sizeof(stccCapacity_) + sizeof(stccSize_);
+      size += sizeof(wCodesAuxM_[0]) * (kBtmBM / StepCodeUtil::kWCNum - 1);
+      size += calcMemBytesStccDynArray();
+      return size;
+    }
+
+
+    size_t calcMemBytesStccDynArray() const noexcept {
+      return stccCapacity_ / 8;
+    }
+
+
+    void printStatistics
+    (
+     std::ostream & os,
+     const bool verbose
+     ) const noexcept {
+      os << "DynRleWithValue::BtmNode object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
+      os << "BTree arity for bottom node = " << static_cast<int>(kBtmBM) << ", label = " << label_ << std::endl;
+      os << "parent = " << parent_ << ", idxInSibling = " << (int)idxInSibling_ << ", numChildren = " << static_cast<uint64_t>(numChildren_) << std::endl;
+      os << "bit size = " << stccSize_ << ", bit capacity = " << stccCapacity_ << std::endl;
+      os << "Total: " << calcMemBytes() << " bytes" << std::endl;
+      os << "dynamic array of step code: " << calcMemBytesStccDynArray() << " bytes" << std::endl;
+      os << "DynRleWithValue::BtmNode object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
+    }
+
+
+    void printDebugInfo
+    (
+     std::ostream & os,
+     const bool verbose
+     ) const noexcept {
+      os << "DynRleWithValue::BtmNodeM object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
+      os << "BTree arity for bottom node = " << static_cast<int>(kBtmBM);
+      os << ", SumOfWeight = " << this->calcSumOfWeight() << ", label = " << label_ << std::endl;
+      os << "parent = " << parent_ << ", idxInSibling = " << (int)idxInSibling_ << ", numChildren = " << static_cast<uint64_t>(numChildren_) << std::endl;
+      os << "bit size = " << stccSize_ << ", bit capacity = " << stccCapacity_ << std::endl;
+      os << "Total: " << calcMemBytes() << " bytes, dynamic array of step code: " << calcMemBytesStccDynArray() << " bytes" << std::endl;
+      {
+        os << "dump bit witdth stored in wCodes (" << stcc_.getConstPtr_wCodes() << ")" << std::endl;
+        for (uint8_t i = 0; i < numChildren_; ++i) {
+          os << (uint64_t)(stcc_.readW(i)) << " ";
+        }
+        os << std::endl;
+      }
+      {
+        os << "dump values" << std::endl;
+        for (uint8_t i = 0; i < numChildren_; ++i) {
+          os << stcc_.read(i) << " ";
+        }
+        os << std::endl;
+      }
+      {
+        os << "dump bits in vals_ (" << stcc_.getConstPtr_vals() << ")" << std::endl;
+        for (uint64_t i = 0; i < (stccSize_ + 63) / 64; ++i) {
+          os << "(" << i << ")";
+          for (uint64_t j = 0; j < 64; ++j) {
+            os << bits::readWBits_S(stcc_.getConstPtr_vals(), 64 * i + 63 - j, ctcbits::UINTW_MAX(1));
+          }
+          os << " ";
+        }
+        os << std::endl;
+      }
+      os << "DynRleWithValue::BtmNodeM object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
+    }
+  }; // end of BtmNode
+
+
+
+
+  ////////////////////////////////////////////////////////////////
+  template<typename BtmNodeMT, uint64_t tparam_kBlockSize>
+  class BtmMInfo_BlockVec
+  {
+  public:
+    static constexpr uint8_t kBtmBM{BtmNodeMT::kBtmBM};
+    using BTreeNodeT = typename BtmNodeMT::BTreeNodeT;
+
+
+  private:
+    //// Private member variables.
+    BlockVec<BtmNodeMT, tparam_kBlockSize> vec_;
+
+
+  public:
+    BtmMInfo_BlockVec
+    (
+     size_t givenCapacity = 0 //!< Initial capacity.
+     ) :
+      vec_(givenCapacity)
+    {}
+
+
+    ~BtmMInfo_BlockVec() {
+      clearAll();
+    }
+
+
+    void clearAll() {
+      for (uint64_t i = 0; i < vec_.getNumBlocks(); ++i) {
+        delete[] vec_.getBlockPtr(i);
+      }
+      vec_.freeBlocksPtrArray();
+    }
+
+
+    size_t capacity() const noexcept {
+      return vec_.capacity();
+    }
+
+
+    void resize
+    (
+     size_t newSize
+     ) noexcept {
+      vec_.resize(newSize);
+    }
+
+
+    size_t getNumBtm() const noexcept {
+      return vec_.size();
+    }
+
+    
+    /*!
+     * @brief Get parent of "btmM"
+     */
+    const BtmNodeMT & getBtmNodeRef(const uint64_t btmM) const noexcept {
+      return vec_[btmM];
+    }
+
+
+    /*!
+     * @brief Get parent of "btmM"
+     */
+    BtmNodeMT & getBtmNodeRef(const uint64_t btmM) noexcept {
+      return vec_[btmM];
+    }
+
+
+    //////////////////////////////// Get values stored for each bottom node via "btm"
+    //////////////// Get parent
+    /*!
+     * @brief Get parent of "btmM"
+     */
+    const auto getParentFromBtmM(const uint64_t btmM) const noexcept {
+      return vec_[btmM].getParent();
+    }
+
+
+    auto getParentFromBtmM(const uint64_t btmM) noexcept {
+      return vec_[btmM].getParent();
+    }
+
+
+    //////////////// Get idxInSibling
+    /*!
+     * @brief Get idxInSibling of "btmM"
+     */
+    auto getIdxInSiblingFromBtmM(const uint64_t btmM) const noexcept {
+      return vec_[btmM].getIdxInSibling();
+    }
+
+
+    //////////////// Get numChildren
+    /*!
+     * @brief Get numChildren of "btmM"
+     */
+    uint8_t getNumChildrenFromBtmM(const uint64_t btmM) const noexcept {
+      return vec_[btmM].getNumChildren();
+    }
+
+
+    /*!
+     * @brief Get TRA-label of run corresponding to "btmM"
+     */
+    uint64_t getLabelFromBtmM(uint64_t btmM) const noexcept {
+      return vec_[btmM].getLabel();
+    }
+
+
+    //////////////////////////////// Get value stored for each leaf
+    //////////////// Get weight
+    /*!
+     * @brief Get length of run corresponding to "idxM"
+     */
+    uint64_t getWeightFromIdxM(uint64_t idxM) const noexcept {
+      return vec_[idxM / kBtmBM].readWeight(idxM % kBtmBM);
+    }
+
+
+    //////////////////////////////// Get sum of weights
+    uint64_t calcSumOfWeightOfBtmM
+    (
+     const uint64_t btmM //!< valid btmM
+     ) const noexcept {
+      return vec_[btmM].calcSumOfWeight();
+    }
+
+
+    uint64_t calcSumOfWeightOfBtmM
+    (
+     const uint64_t btmM,
+     const uint8_t childIdx_beg,
+     const uint8_t childIdx_end
+     ) const noexcept {
+      return vec_[btmM].calcSumOfWeight(childIdx_beg, childIdx_end);
+    }
+
+
+    //////////////////////////////// search pos
+    /*!
+     * @brief Return index (in btmM) corresponding to the run containing 'pos'-th character (0base).
+     * @attention 'pos' is modified to be the relative position (0base) from the beginning of the run.
+     */
+    uint64_t searchPos
+    (
+     uint64_t btmM,
+     uint64_t & pos //!< [in,out] Give position to search (< |T|). It is modified to relative position.
+     ) const noexcept {
+      // {//debug
+      //   std::cerr << __func__ << ": pos = " << pos << std::endl;
+      // }
+      return vec_[btmM].searchPos(pos);
+    }
+
+
+    ////////////////////////////////
+    void setParentRefOfBtmM
+    (
+     uint64_t btmM,
+     BTreeNodeT * newParent,
+     uint8_t newIdxInSibling
+     ) noexcept {
+      vec_[btmM].setParentRef(newParent, newIdxInSibling);
+    }
+
+
+    void setLabel
+    (
+     uint64_t btmM,
+     uint64_t newLabel
+     ) noexcept {
+      vec_[btmM].setLabel(newLabel);
+    }
+
+
+    /*!
+     * @brief Change "numChildren_" to "newSize".
+     */
+    void setNumChildren
+    (
+     const uint64_t btmM,
+     const uint8_t newSize
+     ) noexcept {
+      vec_[btmM].setNumChildren(newSize);
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      size += vec_.calcMemBytes(false);
+      for (uint64_t i = 0; i < vec_.capacity(); ++i) {
+        size += vec_[i].calcMemBytes(true);
+      }
+      return size;
+    }
+
+
+    size_t calcMemBytes_Weights() const noexcept {
+      size_t size = 0;
+      for (uint64_t i = 0; i < vec_.capacity(); ++i) {
+        size += vec_[i].calcMemBytes_Weights();
+      }
+      return size;
+    }
+
+
+    size_t calcMemBytes_used() const noexcept {
+      size_t size = 0;
+      for (uint64_t i = 0; i < vec_.size(); ++i) {
+        size += vec_[i].calcMemBytes();
+      }
+      return size;
+    }
+  };
+
+
+
+
+  ////////////////////////////////////////////////////////////////
+  template<typename tparam_BTreeNodeT, typename tparam_CharT, uint8_t tparam_kBtmBS>
+  class BtmNodeS
+  {
+  public:
+    static constexpr uint8_t kBtmBS{tparam_kBtmBS};
+    using BTreeNodeT = tparam_BTreeNodeT;
+    using CharT = tparam_CharT;
+
+
+  private:
+    //// Private member variables.
+    BTreeNodeT * parent_; //!< Pointer to parent of btmS.
+    CharT char_; //!< char of btmS.
+    uint8_t idxInSibling_; //!< idxInSibling of btmS.
+    uint8_t numChildren_; //!< Num of children of btmS.
+
+
+  public:
+    BtmNodeS() :
+      parent_(nullptr),
+      char_(0),
+      idxInSibling_(0),
+      numChildren_(0)
+    {}
+
+
+    ~BtmNodeS()
+    {}
+
+
+    uint16_t getNumChildren() const noexcept {
+      return numChildren_;
+    }
+
+
+    uint16_t getIdxInSibling() const noexcept {
+      return idxInSibling_;
+    }
+
+
+    CharT getChar() const noexcept {
+      return char_;
+    }
+
+
+    BTreeNodeT * getParent() const noexcept {
+      return parent_;
+    }
+
+
+    void setChar
+    (
+     CharT c
+     ) noexcept {
+      char_ = c;
+    }
+
+
+    void setParentRef
+    (
+     BTreeNodeT * newParent,
+     uint8_t newIdxInSibling
+     ) noexcept {
+      this->parent_ = newParent;
+      this->idxInSibling_ = newIdxInSibling;
+    }
+
+
+    /*!
+     * @brief Change "numChildren_" to "newSize".
+     */
+    void setNumChildren
+    (
+     const uint8_t newSize
+     ) noexcept {
+      assert(newSize <= kBtmBS);
+
+      numChildren_ = newSize;
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      return size;
+    }
+  };
+
+
+
+
+  ////////////////////////////////////////////////////////////////
+  template<typename BtmNodeST, uint64_t tparam_kBlockSize>
+  class BtmSInfo_BlockVec
+  {
+  public:
+    static constexpr uint8_t kBtmBS{BtmNodeST::kBtmBS};
+    using BTreeNodeT = typename BtmNodeST::BTreeNodeT;
+    using CharT = typename BtmNodeST::CharT;
+
+
+  private:
+    //// Private member variables.
+    BlockVec<BtmNodeST, tparam_kBlockSize> vec_;
+
+
+  public:
+    BtmSInfo_BlockVec
+    (
+     size_t givenCapacity = 0 //!< Initial capacity.
+     ) :
+      vec_(givenCapacity)
+    {}
+
+
+    ~BtmSInfo_BlockVec() {
+      clearAll();
+    }
+
+
+    void clearAll() {
+      for (uint64_t i = 0; i < vec_.getNumBlocks(); ++i) {
+        delete[] vec_.getBlockPtr(i);
+      }
+      vec_.freeBlocksPtrArray();
+    }
+
+
+    void resize
+    (
+     size_t newSize
+     ) noexcept {
+      bool expand = vec_.capacity() == newSize;
+      vec_.resize(newSize);
+    }
+
+
+    size_t capacity() const noexcept {
+      return vec_.capacity();
+    }
+
+
+    size_t getNumBtm() const noexcept {
+      return vec_.size();
+    }
+
+
+    /*!
+     * @brief Get parent of "btmS"
+     */
+    const auto getParentFromBtmS(const uint64_t btmS) const noexcept {
+      return vec_[btmS].getParent();
+    }
+
+
+    auto getParentFromBtmS(const uint64_t btmS) noexcept {
+      return vec_[btmS].getParent();
+    }
+
+
+    //////////////// Get idxInSibling
+    /*!
+     * @brief Get idxInSibling of "btmS"
+     */
+    uint8_t getIdxInSiblingFromBtmS(const uint64_t btmS) const noexcept {
+      return vec_[btmS].getIdxInSibling();
+    }
+
+
+    //////////////// Get numChildren
+    /*!
+     * @brief Get numChildren of "btmS"
+     */
+    uint8_t getNumChildrenFromBtmS(const uint64_t btmS) const noexcept {
+      return vec_[btmS].getNumChildren();
+    }
+
+
+    //////////////////////////////// Get value stored for each bottom node via "idx" or "btm"
+    /*!
+     * @brief Get char of run corresponding to "idxS"
+     */
+    CharT getCharFromBtmS(uint64_t btmS) const noexcept {
+      return vec_[btmS].getChar();
+    }
+
+
+    ////////////////////////////////
+    void setParentRefOfBtmS
+    (
+     uint64_t btmS,
+     BTreeNodeT * newParent,
+     uint8_t newIdxInSibling
+     ) noexcept {
+      vec_[btmS].setParentRef(newParent, newIdxInSibling);
+    }
+
+
+    void setChar
+    (
+     uint64_t btmS,
+     CharT c
+     ) noexcept {
+      vec_[btmS].setChar(c);
+    }
+
+
+    void setNumChildren
+    (
+     uint64_t btmS,
+     uint8_t newSize
+     ) noexcept {
+      assert(newSize <= kBtmBS);
+
+      vec_[btmS].setNumChildren(newSize);
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      size += vec_.calcMemBytes(false);
+      for (uint64_t i = 0; i < vec_.capacity(); ++i) {
+        size += vec_[i].calcMemBytes(true);
+      }
+      return size;
+    }
+
+
+    size_t calcMemBytes_used() const noexcept {
+      size_t size = 0;
+      for (uint64_t i = 0; i < vec_.size(); ++i) {
+        size += vec_[i].calcMemBytes();
+      }
+      return size;
+    }
+  };
+
+
+
+
+  ////////////////////////////////////////////////////////////////
+  template<uint64_t tparam_kBlockSize>
+  class Samples_WBitsBlockVec
+  {
+  private:
+    //// Private member variables.
+    WBitsBlockVec<tparam_kBlockSize> vec_;
+
+
+  public:
+    Samples_WBitsBlockVec() :
+      vec_()
+    {}
+
+
+    ~Samples_WBitsBlockVec()
+    {}
+
+
+    void resize
+    (
+     size_t newSize
+     ) noexcept {
+      vec_.resize(newSize);
+    }
+
+
+    //////////////////////////////// statistics
+    size_t calcMemBytes
+    (
+     bool includeThis = true
+     ) const noexcept {
+      size_t size = sizeof(*this) * includeThis;
+      size += vec_.calcMemBytes(false);
+      return size;
+    }
+  };
+
+
+  ////////////////////////////////////////////////////////////////
   /*!
    * @brief Dynamic partial sum data structure implemented by B+tree, where each leaf is associated with value.
    * @tparam kB Arity for internal node of B+tree, which should be in {32, 64, 128}.
@@ -52,356 +947,37 @@ namespace itmmti
    *             Each bottom node "btmS" can have "kBtmB" children, which correspond to indexes [btmS * kBtmB, (btmS+1) * kBtmB).
    *     - idxS: Indexes that are corresponding to children of "btmS".
    */
-  template<uint8_t tparam_kB, uint8_t tparam_kBtmB>
+  template<typename IdxLinksT, typename SamplesT, typename BtmMInfoT, typename BtmSInfoT>
   class DynRleForRlbwt
   {
   public:
     // Public constant, alias etc.
-    static constexpr uint8_t kB{tparam_kB};
-    static constexpr uint8_t kBtmB{tparam_kBtmB};
-    using BTreeNodeT = BTreeNode<kB>;
+    using BTreeNodeT = typename BtmMInfoT::BTreeNodeT;
+    using CharT = typename BtmSInfoT::CharT;
+    static constexpr uint8_t kB{BTreeNodeT::kB};
+    static constexpr uint8_t kBtmBM{BtmMInfoT::kBtmBM};
+    static constexpr uint8_t kBtmBS{BtmSInfoT::kBtmBS};
 
-    static constexpr size_t kUnitBits{kBtmB * 4};
-    static constexpr bool kM{0};
-    static constexpr bool kS{1};
-
-
-  private:
-    // Inner class
-    class BtmNodeM
-    {
-    public:
-      //// Private member variables.
-      StepCodeCore<kBtmB> stcc_; //!< Storing weights
-      uint64_t btmVal_; //!< TRA label of btmM.
-      BTreeNodeT * parent_; //!< Pointer to parent of btmM.
-      uint16_t stccCapacity_; //!< Current bit capacity of stcc_
-      uint16_t stccSize_; //!< Current bit size of stcc_
-      uint8_t numChildren_; //!< Current size (number of elements).
-      uint8_t idxInSibling_; //!< idxInSibling of btmM.
-      uint8_t wCodesAuxM_[kBtmB / StepCodeUtil::kWCNum - 1];
-
-
-      BtmNodeM
-      (
-       uint16_t initStccCapacity = 0
-       ) :
-        stcc_(),
-        btmVal_(0),
-        parent_(nullptr),
-        stccCapacity_(0),
-        stccSize_(0),
-        numChildren_(0),
-        idxInSibling_(0)
-      {
-        assert(initStccCapacity <= UINT16_MAX - 64);
-
-        reserveBitCapacity(initStccCapacity);
-      }
-
-
-      ~BtmNodeM() {
-        // stcc_ is freed.
-      }
-
-
-      uint16_t getStccSize() const noexcept {
-        return stccSize_;
-      }
-
-
-      uint16_t getStccCapacity() const noexcept {
-        return stccCapacity_;
-      }
-
-
-      uint16_t getNumChildren() const noexcept {
-        return numChildren_;
-      }
-
-
-      uint16_t getIdxInSibling() const noexcept {
-        return idxInSibling_;
-      }
-
-
-      uint64_t getBtmVal() const noexcept {
-        return btmVal_;
-      }
-
-
-      void setBtmVal
-      (
-       uint64_t val
-       ) noexcept {
-        btmVal_ = val;
-      }
-
-
-      BTreeNodeT * getParent() const noexcept {
-        return parent_;
-      }
-
-
-      uint64_t readStccVal
-      (
-       const uint8_t idx //!< in [0..numChildren_)
-       ) const noexcept {
-        assert(idx < numChildren_);
-
-        return stcc_.read(idx);
-      }
-
-
-      uint64_t calcSumOfWeight() const noexcept {
-        const auto & stcc = this->getConstRef_stcc();
-        const auto num = numChildren_;
-        uint64_t sum = 0;
-        uint64_t bitPos = 0;
-        for (uint64_t i = 0; i < num; ++i) {
-          const auto w = stcc.readW(i);
-          sum += stcc.readWBits(bitPos, w);
-          bitPos += w;
-        }
-
-        return sum;
-      }
-
-
-      /*!
-       * @brief Calculate the beginning bit-pos of "idx"-th value in stcc_.
-       */
-      uint16_t calcBitPos
-      (
-       const uint8_t idx //!< in [0..numChildren_]
-       ) const noexcept {
-        assert(idx <= numChildren_);
-
-        if (idx < numChildren_) {
-          return static_cast<uint16_t>(stcc_.calcBitPos(idx, wCodesAuxM_));
-        } else {
-          return stccSize_;
-        }
-      }
-
-
-      /*!
-       * @brief Get read-only array pointer.
-       */
-      const StepCodeCore<kBtmB> & getConstRef_stcc() const noexcept
-      {
-        return stcc_;
-      }
-
-
-      /*!
-       * @brief Get read-only array pointer.
-       */
-      const uint64_t * getConstPtr_vals() const noexcept
-      {
-        return stcc_.getConstPtr_vals();
-      }
-
-
-      /*!
-       * @brief Get read-only wCodes_ array pointer.
-       */
-      const uint64_t * getConstPtr_wCodes() const noexcept
-      {
-        return stcc_.getConstPtr_wCodes();
-      }
-
-
-      void reserveBitCapacity
-      (
-       uint16_t givenBitCapacity
-       ) {
-        if (givenBitCapacity > this->stccCapacity_) {
-          size_t newSize = (static_cast<size_t>(givenBitCapacity) / kUnitBits + 2) * kUnitBits;
-          this->stccCapacity_ = static_cast<uint16_t>(this->stcc_.setBitCapacity(static_cast<size_t>(givenBitCapacity)));
-        }
-      }
-
-
-      void shrinkBitCapacity() {
-        if (this->stccCapacity_ - this->stccSize_ > kUnitBits) {
-          this->stccCapacity_ = static_cast<uint16_t>(stcc_.setBitCapacity(static_cast<size_t>(this->stccSize_)));
-        }
-      }
-
-
-      void setParentRef
-      (
-       BTreeNodeT * newParent,
-       uint8_t newIdxInSibling
-       ) noexcept {
-        this->parent_ = newParent;
-        this->idxInSibling_ = newIdxInSibling;
-      }
-
-
-      /*!
-       * @brief Resize "numChildren_" to "newSize".
-       * @note
-       *   It does not change bitCapacity.
-       */
-      void resize
-      (
-       const uint8_t newSize
-       ) noexcept {
-        assert(newSize <= kBtmB);
-
-        numChildren_ = newSize;
-      }
-
-
-      /*!
-       * @brief update wCodesAuxM.
-       */
-      void updateWCodesAuxM
-      (
-       const uint16_t idxBeg,
-       const uint16_t idxEnd
-       ) noexcept {
-        assert(idxBeg < idxEnd);
-
-        const uint64_t beg = idxBeg / StepCodeUtil::kWCNum;
-        const uint64_t end = (idxEnd - 1) / StepCodeUtil::kWCNum + 1;
-        // std::cerr << __FUNCTION__ << ": " << idxBeg << "->" << beg << ", " << idxEnd << "->" << end << std::endl;
-        stcc_.updateWCodesAuxM(wCodesAuxM_, beg, end);
-      }
-
-
-      /*!
-       * @brief Replace values.
-       */
-      void replace
-      (
-       const uint64_t * newVals, //!< Storing stcc values that replace existing stcc values
-       const uint8_t num, //!< Number of elements to replace.
-       const uint8_t idx //!< in [0..numChildren_). Beginning idx of tgt.
-       ) {
-        assert(idx + num <= numChildren_);
-
-        const uint16_t bitPos0 = this->calcBitPos(idx);
-        uint16_t bitPos = bitPos0;
-        uint16_t sumW_ins = 0;
-        uint16_t sumW_del = 0;
-        for (uint16_t i = idx; i < idx + num; ++i) {
-          const uint8_t w_old = stcc_.readW(i);
-          const uint8_t w_new = StepCodeUtil::calcSteppedW(newVals[i - idx]);
-          sumW_del += w_old;
-          sumW_ins += w_new;
-          stcc_.writeWCode(StepCodeUtil::calcWCodeFromSteppedW(w_new), i);
-          bitPos += w_old;
-        }
-        this->updateWCodesAuxM(idx, idx + num);
-
-        if (sumW_ins != sumW_del) {
-          const uint16_t newStccSize = this->stccSize_ + sumW_ins - sumW_del;
-          if (newStccSize != this->stccSize_) {
-            this->reserveBitCapacity(newStccSize);
-            this->stcc_.mvVals(this->stcc_.getConstPtr_vals(), bitPos, bitPos0 + sumW_ins, this->stccSize_ - bitPos);
-          }
-          this->stccSize_ = newStccSize;
-        }
-        bitPos = bitPos0;
-        for (uint16_t i = idx; i < idx + num; ++i) {
-          uint8_t w = this->stcc_.readW(i);
-          this->stcc_.writeWBits(newVals[i - idx], bitPos, w);
-          bitPos += w;
-        }
-      }
-
-
-      //////////////////////////////// statistics
-      size_t calcMemBytes
-      (
-       bool includeThis = true
-       ) const noexcept {
-        size_t size = sizeof(*this) * includeThis;
-        return size + calcMemBytesStccDynArray();
-      }
-
-
-      size_t calcMemBytesStccDynArray() const noexcept {
-        return stccCapacity_ / 8;
-      }
-
-
-      void printStatistics
-      (
-       std::ostream & os,
-       const bool verbose
-       ) const noexcept {
-        os << "DynRleWithValue::BtmNode object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
-        os << "BTree arity for bottom node = " << static_cast<int>(kBtmB) << ", btmVal = " << btmVal_ << std::endl;
-        os << "parent = " << parent_ << ", idxInSibling = " << (int)idxInSibling_ << ", numChildren = " << static_cast<uint64_t>(numChildren_) << std::endl;
-        os << "bit size = " << stccSize_ << ", bit capacity = " << stccCapacity_ << std::endl;
-        os << "Total: " << calcMemBytes() << " bytes" << std::endl;
-        os << "dynamic array of step code: " << calcMemBytesStccDynArray() << " bytes" << std::endl;
-        os << "DynRleWithValue::BtmNode object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
-      }
-
-
-      void printDebugInfo
-      (
-       std::ostream & os,
-       const bool verbose
-       ) const noexcept {
-        os << "DynRleWithValue::BtmNodeM object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
-        os << "BTree arity for bottom node = " << static_cast<int>(kBtmB);
-        os << ", SumOfWeight = " << this->calcSumOfWeight() << ", label = " << btmVal_ << std::endl;
-        os << "parent = " << parent_ << ", idxInSibling = " << (int)idxInSibling_ << ", numChildren = " << static_cast<uint64_t>(numChildren_) << std::endl;
-        os << "bit size = " << stccSize_ << ", bit capacity = " << stccCapacity_ << std::endl;
-        os << "Total: " << calcMemBytes() << " bytes, dynamic array of step code: " << calcMemBytesStccDynArray() << " bytes" << std::endl;
-        {
-          os << "dump bit witdth stored in wCodes (" << stcc_.getConstPtr_wCodes() << ")" << std::endl;
-          for (uint8_t i = 0; i < numChildren_; ++i) {
-            os << (uint64_t)(stcc_.readW(i)) << " ";
-          }
-          os << std::endl;
-        }
-        {
-          os << "dump values" << std::endl;
-          for (uint8_t i = 0; i < numChildren_; ++i) {
-            os << stcc_.read(i) << " ";
-          }
-          os << std::endl;
-        }
-        {
-          os << "dump bits in vals_ (" << stcc_.getConstPtr_vals() << ")" << std::endl;
-          for (uint64_t i = 0; i < (stccSize_ + 63) / 64; ++i) {
-            os << "(" << i << ")";
-            for (uint64_t j = 0; j < 64; ++j) {
-              os << bits::readWBits_S(stcc_.getConstPtr_vals(), 64 * i + 63 - j, ctcbits::UINTW_MAX(1));
-            }
-            os << " ";
-          }
-          os << std::endl;
-        }
-        os << "DynRleWithValue::BtmNodeM object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
-      }
-    }; // end of BtmNode
+    // static constexpr size_t kUnitBits{kBtmB * 4};
+    // static constexpr bool kM{0};
+    // static constexpr bool kS{1};
 
 
   private:
-    WBitsVec sample_; //!< Sampled positions.
     typename BTreeNodeT::SuperRootT srootM_; //!< Super root of mixed tree
     // Information for leaves and elements for mixed tree.
-    WBitsVec idxM2S_; //!< Packed array mapping idxM to corresponding idxS.
-    BtmNodeM ** btmPtrsM_; //!< Storing weights
+    IdxLinksT idxM2S_; //!< Array type mapping idxM to corresponding idxS.
+    BtmMInfoT btmMInfo_; //!< Storing information on MTree
     // Alphabet tree: the bottoms of alphabet tree are roots of separated trees.
     typename BTreeNodeT::SuperRootT srootA_; //!< Super root of alphabet tree
     // Information for leaves and elements for separated tree.
-    WBitsVec idxS2M_; //!< Packed array mapping idxS to corresponding idxM.
-    BTreeNodeT ** parentS_; //!< Pointer to parent of btmS.
-    uint64_t * charS_; //!< 64bit-char of btmS.
-    uint8_t * idxInSiblingS_; //!< idxInSibling of btmS.
-    uint8_t * numChildrenS_; //!< Num of children of btmS.
+    IdxLinksT idxS2M_; //!< Array type mapping idxS to corresponding idxM.
+    BtmSInfoT btmSInfo_; //!< Storing information on STree
+    // Sample positions
+    SamplesT samples_; //!< Information on sample positions associated to leaves of MTree
+    uint64_t sampleUb_; //!< current sample upper bound (exclusive). Sample pos (0base) must be less than "sampleUb_". If 0, it means samples are not used.
 
     uint8_t traCode_; //!< traCode in [9..16).
-    uint64_t sampleUb_; //!< current sample upper bound. Sample pos (0base) must be less than "sampleUb_". If 0, it means samples are not needed.
 
 
   public:
@@ -410,18 +986,14 @@ namespace itmmti
      const size_t initNumBtms = 0,
      const uint64_t initSampleUb = 0
      ) :
-      sample_(),
       srootM_(),
       idxM2S_(),
-      btmPtrsM_(nullptr),
+      btmMInfo_(),
       srootA_(),
       idxS2M_(),
-      parentS_(nullptr),
-      charS_(nullptr),
-      idxInSiblingS_(nullptr),
-      numChildrenS_(nullptr),
-      traCode_(9),
-      sampleUb_(0)
+      btmSInfo_(),
+      samples_(),
+      traCode_(9)
     {
       if (initNumBtms) {
         init(initNumBtms, initSampleUb);
@@ -450,23 +1022,25 @@ namespace itmmti
       if (isReady()) {
         clearAll();
       }
+      idxM2S_.decreaseW(1);
+      idxM2S_.increaseW(8);
+      idxM2S_.reserve(initNumBtms * kBtmBM);
+      idxS2M_.decreaseW(1);
+      idxS2M_.increaseW(8);
+      idxS2M_.reserve(initNumBtms * kBtmBS);
       if (initSampleUb) {
-        increaseWOfSample(initSampleUb - 1);
+        increaseSampleUb(initSampleUb);
       }
-      reserveBtm(initNumBtms);
 
       srootM_.setRoot(new BTreeNodeT(reinterpret_cast<void *>(0), true, true, true, true));
       srootM_.root_->putFirstBtm(reinterpret_cast<void *>(0), 0);
       // sentinel
-      auto firstBtmNodeM = new BtmNodeM(kUnitBits);
-      firstBtmNodeM->setParentRef(srootM_.root_, 0);
-      setNewBtmNodeM(firstBtmNodeM);
-      idxM2S_.resize(kBtmB);
-      sample_.resize(kBtmB);
+      setNewBtmNodeM();
+      btmMInfo_.setParentRefOfBtmM(0, srootM_.root_, 0);
       {
         const uint64_t newVals[] = {0};
         const uint64_t newLinks[] = {0};
-        insertNewElemM_simple(0, 0, newVals, newLinks, 1, 0);
+        insertNewElemM(0, 0, newVals, newLinks, 1, 0);
       }
 
       auto * dummyRootS = new BTreeNodeT(nullptr, true, true, true, false, true);
@@ -484,23 +1058,11 @@ namespace itmmti
         return;
       }
 
-      for (uint64_t i = 0; i < idxM2S_.size() / kBtmB; ++i) {
-        delete btmPtrsM_[i];
-      }
-      if (sampleUb_) {
-        sample_.clear(); 
-        sample_.convert(1, 0, true);
-        sampleUb_ = 256;
-      }
-      idxM2S_.clear(); 
-      idxM2S_.changeCapacity(0);
-      idxS2M_.clear(); 
-      idxS2M_.changeCapacity(0);
-      memutil::safefree(btmPtrsM_);
-      memutil::safefree(parentS_);
-      memutil::safefree(charS_);
-      memutil::safefree(idxInSiblingS_);
-      memutil::safefree(numChildrenS_);
+      idxM2S_.clearAll();
+      idxS2M_.clearAll();
+      samples_.clearAll();
+      btmMInfo_.clearAll();
+      btmSInfo_.clearAll();
 
       { // delete separated tree
         auto * rootS = srootA_.root_->getLmBtm_DirectJump();
@@ -517,16 +1079,16 @@ namespace itmmti
     }
 
 
-    void increaseWOfSample
+    void increaseSampleUb
     (
-     const uint64_t minSupportSampleVal
+     const uint64_t sampleUb
      ) {
       // {// debug
       //   std::cerr << __func__ << ": minSupportSampleVal = " << minSupportSampleVal << std::endl;
       // }
-      if (minSupportSampleVal >= sampleUb_) {
-        const uint8_t newW = bits::bitSize(minSupportSampleVal);
-        sample_.convert(newW, idxM2S_.capacity());
+      const uint8_t newW = bits::bitSize(sampleUb - 1);
+      if (newW > samples_.getW()) {
+        samples_.increaseW(newW);
         sampleUb_ = UINT64_C(1) << newW;
       }
     }
@@ -550,8 +1112,8 @@ namespace itmmti
      */
     bool isValidIdxM(const uint64_t idxM) const noexcept {
       return (isReady() &&
-              (idxM / kBtmB) < idxM2S_.size() / kBtmB &&
-              (idxM % kBtmB) < getNumChildrenFromBtmM(idxM / kBtmB));
+              (idxM / kBtmBM) < getNumBtmM() &&
+              (idxM % kBtmBM) < getNumChildrenFromBtmM(idxM / kBtmBM));
     }
 
 
@@ -560,8 +1122,8 @@ namespace itmmti
      */
     bool isValidIdxS(const uint64_t idxS) const noexcept {
       return (isReady() &&
-              (idxS / kBtmB) < idxS2M_.size() / kBtmB &&
-              (idxS % kBtmB) < getNumChildrenFromBtmS(idxS / kBtmB));
+              (idxS / kBtmBS) < getNumBtmS() &&
+              (idxS % kBtmBS) < getNumChildrenFromBtmS(idxS / kBtmBS));
     }
 
 
@@ -569,10 +1131,7 @@ namespace itmmti
      * @brief Return if given "btmM" is valid
      */
     bool isValidBtmM(const uint64_t btmM) const noexcept {
-      if (!(btmM < idxM2S_.size() / kBtmB)) {
-        std::cerr << __func__ << ": btmM = " << btmM << std::endl;
-      }
-      return (isReady() && btmM < idxM2S_.size() / kBtmB);
+      return (isReady() && btmM < getNumBtmM());
     }
 
 
@@ -580,7 +1139,7 @@ namespace itmmti
      * @brief Return if given "idxS" corresponds to valid run.
      */
     bool isValidBtmS(const uint64_t btmS) const noexcept {
-      return (isReady() && btmS < idxS2M_.size() / kBtmB);
+      return (isReady() && btmS < getNumBtmS());
     }
 
 
@@ -598,6 +1157,23 @@ namespace itmmti
 
 
     //////////////////////////////// Get values stored for each bottom node via "btm" and "btmNode"
+    //////////////// Get number of bottom nodes
+    /*!
+     * @brief Get current number of bottom nodes of MTree
+     */
+    size_t getNumBtmM() const noexcept {
+      return btmMInfo_.getNumBtm();
+    }
+
+
+    /*!
+     * @brief Get current number of bottom nodes of STree
+     */
+    size_t getNumBtmS() const noexcept {
+      return btmSInfo_.getNumBtm();
+    }
+
+
     //////////////// Get parent
     /*!
      * @brief Get parent of "btmM"
@@ -605,14 +1181,14 @@ namespace itmmti
     const auto getParentFromBtmM(const uint64_t btmM) const noexcept {
       assert(isValidBtmM(btmM));
 
-      return btmPtrsM_[btmM]->getParent();
+      return btmMInfo_.getParentFromBtmM(btmM);
     }
 
 
     auto getParentFromBtmM(const uint64_t btmM) noexcept {
       assert(isValidBtmM(btmM));
 
-      return btmPtrsM_[btmM]->getParent();
+      return btmMInfo_.getParentFromBtmM(btmM);
     }
 
 
@@ -622,14 +1198,14 @@ namespace itmmti
     const auto getParentFromBtmS(const uint64_t btmS) const noexcept {
       assert(isValidBtmS(btmS));
 
-      return parentS_[btmS];
+      return btmSInfo_.getParentFromBtmS(btmS);
     }
 
 
     auto getParentFromBtmS(const uint64_t btmS) noexcept {
       assert(isValidBtmS(btmS));
 
-      return parentS_[btmS];
+      return btmSInfo_.getParentFromBtmS(btmS);
     }
 
 
@@ -640,7 +1216,7 @@ namespace itmmti
     auto getIdxInSiblingFromBtmM(const uint64_t btmM) const noexcept {
       assert(isValidBtmM(btmM));
 
-      return btmPtrsM_[btmM]->getIdxInSibling();
+      return btmMInfo_.getIdxInSiblingFromBtmM(btmM);
     }
 
 
@@ -650,7 +1226,7 @@ namespace itmmti
     auto getIdxInSiblingFromBtmS(const uint64_t btmS) const noexcept {
       assert(isValidBtmS(btmS));
 
-      return idxInSiblingS_[btmS];
+      return btmSInfo_.getIdxInSiblingFromBtmS(btmS);
     }
 
 
@@ -661,7 +1237,7 @@ namespace itmmti
     uint8_t getNumChildrenFromBtmM(const uint64_t btmM) const noexcept {
       assert(isValidBtmM(btmM));
 
-      return btmPtrsM_[btmM]->getNumChildren();
+      return btmMInfo_.getNumChildrenFromBtmM(btmM);
     }
 
 
@@ -671,7 +1247,7 @@ namespace itmmti
     uint8_t getNumChildrenFromBtmS(const uint64_t btmS) const noexcept {
       assert(isValidBtmS(btmS));
 
-      return numChildrenS_[btmS];
+      return btmSInfo_.getNumChildrenFromBtmS(btmS);
     }
 
 
@@ -679,17 +1255,17 @@ namespace itmmti
     /*!
      * @brief Get char of run corresponding to "idxS"
      */
-    uint64_t getCharFromBtmS(uint64_t btmS) const noexcept {
+    CharT getCharFromBtmS(uint64_t btmS) const noexcept {
       assert(isValidBtmS(btmS));
 
-      return charS_[btmS];
+      return btmSInfo_.getCharFromBtmS(btmS);
     }
 
 
     /*!
      * @brief Get char of run corresponding to "idxM"
      */
-    uint64_t getCharFromIdxM(uint64_t idxM) const noexcept {
+    CharT getCharFromIdxM(uint64_t idxM) const noexcept {
       // {//debug
       //   std::cerr << __func__ << ": idxM = " << idxM << std::endl;
       // }
@@ -708,7 +1284,7 @@ namespace itmmti
       // }
       assert(isValidIdxS(idxS));
 
-      return charS_[idxS / kBtmB];
+      return getCharFromBtmS(idxS / kBtmBS);
     }
 
 
@@ -718,7 +1294,7 @@ namespace itmmti
     uint64_t getLabelFromBtmM(uint64_t btmM) const noexcept {
       assert(isValidBtmM(btmM));
 
-      return btmPtrsM_[btmM]->getBtmVal();
+      return btmMInfo_.getLabelFromBtmM(btmM);
     }
 
 
@@ -750,9 +1326,8 @@ namespace itmmti
      */
     uint64_t getSampleFromIdxM(uint64_t idxM) const noexcept {
       assert(isValidIdxM(idxM));
-      assert(sampleUb_);
 
-      return sample_.read(idxM);
+      return samples_.read(idxM);
     }
 
 
@@ -761,7 +1336,6 @@ namespace itmmti
      */
     uint64_t getSampleFromIdxS(uint64_t idxS) const noexcept {
       assert(isValidIdxS(idxS));
-      assert(sampleUb_);
 
       return getSampleFromIdxM(idxS2M(idxS));
     }
@@ -774,7 +1348,7 @@ namespace itmmti
     uint64_t getWeightFromIdxM(uint64_t idxM) const noexcept {
       assert(isValidIdxM(idxM));
 
-      return btmPtrsM_[idxM / kBtmB]->readStccVal(idxM % kBtmB);
+      return btmMInfo_.getWeightFromIdxM(idxM);
     }
 
 
@@ -799,7 +1373,7 @@ namespace itmmti
       assert(isReady());
       assert(nodeS); // nodeS should be valid node
 
-      return getCharFromBtmS(reinterpret_cast<uint64_t>(nodeS->getLmBtm_DirectJump()));
+      return getCharFromBtmS(reinterpret_cast<uintptr_t>(nodeS->getLmBtm_DirectJump()));
     }
 
 
@@ -834,40 +1408,21 @@ namespace itmmti
      ) const noexcept {
       assert(isValidBtmM(btmM));
 
-      const auto & stcc = btmPtrsM_[btmM]->getConstRef_stcc();
-      const auto num = getNumChildrenFromBtmM(btmM);
-      uint64_t sum = 0;
-      uint64_t bitPos = 0;
-      for (uint64_t i = 0; i < num; ++i) {
-        const auto w = stcc.readW(i);
-        sum += stcc.readWBits(bitPos, w);
-        bitPos += w;
-      }
-
-      return sum;
+      return btmMInfo_.calcSumOfWeightOfBtmM(btmM);
     }
 
 
     uint64_t calcSumOfWeightOfBtmM
     (
      const uint64_t btmM,
-     const uint8_t childIdx_beg,
-     const uint8_t childIdx_end
+     const uint8_t childIdx_beg, //!< child index to begin (inclusive)
+     const uint8_t childIdx_end //!< child index to end (exclusive)
      ) const noexcept {
       assert(isValidBtmM(btmM));
       assert(childIdx_beg <= childIdx_end);
       assert(childIdx_end <= getNumChildrenFromBtmM(btmM));
 
-      const auto & stcc = btmPtrsM_[btmM]->getConstRef_stcc();
-      uint64_t bitPos = stcc.calcBitPos(childIdx_beg);
-      uint64_t sum = 0;
-      for (uint16_t i = childIdx_beg; i < childIdx_end; ++i) {
-        const auto w = stcc.readW(i);
-        sum += stcc.readWBits(bitPos, w);
-        bitPos += w;
-      }
-
-      return sum;
+      return btmMInfo_.calcSumOfWeightOfBtmM(btmM, childIdx_beg, childIdx_end);
     }
 
 
@@ -879,7 +1434,7 @@ namespace itmmti
 
       uint64_t sum = 0;
       for (uint64_t i = 0; i < getNumChildrenFromBtmS(btmS); ++i) { // use OpenMP?
-        const auto idxM = idxS2M(btmS * kBtmB + i);
+        const auto idxM = idxS2M(btmS * kBtmBS + i);
         sum += getWeightFromIdxM(idxM);
       }
       return sum;
@@ -898,7 +1453,7 @@ namespace itmmti
 
       uint64_t sum = 0;
       for (uint16_t i = childIdx_beg; i < childIdx_end; ++i) { // use OpenMP?
-        const auto idxM = idxS2M(btmS * kBtmB + i);
+        const auto idxM = idxS2M(btmS * kBtmBS + i);
         sum += getWeightFromIdxM(idxM);
       }
 
@@ -938,7 +1493,7 @@ namespace itmmti
       //   std::cerr << __func__ << ": ch = " << ch << ", idxM = " << idxM << ", relativePos = " << relativePos << std::endl;
       // }
       assert(isValidIdxM(idxM));
-      assert(relativePos < calcSumOfWeightOfBtmM(idxM / kBtmB));
+      assert(relativePos < calcSumOfWeightOfBtmM(idxM / kBtmBM));
 
       const auto chNow = getCharFromIdxM(idxM);
       uint64_t ret = 0;
@@ -951,15 +1506,15 @@ namespace itmmti
         if (retRootS->isDummy() || getCharFromNodeS(retRootS) != ch) {
           return 0;
         }
-        idxS = getPredIdxSFromIdxM(retRootS, ch, idxM);
+        idxS = calcPredIdxSFromIdxM(retRootS, ch, idxM);
       }
-      ret += calcSumOfWeightOfBtmS(idxS / kBtmB, 0, (idxS % kBtmB) + (ch != chNow)); // TODO: calc sum of weights for smaller part
+      ret += calcSumOfWeightOfBtmS(idxS / kBtmBS, 0, (idxS % kBtmBS) + (ch != chNow)); // TODO: calc sum of weights for smaller part
       if (calcTotalRank) {
         BTreeNodeT * root;
-        ret += getParentFromBtmS(idxS / kBtmB)->calcPSum(getIdxInSiblingFromBtmS(idxS / kBtmB), root);
+        ret += getParentFromBtmS(idxS / kBtmBS)->calcPSum(getIdxInSiblingFromBtmS(idxS / kBtmBS), root);
         return ret + root->getParent()->calcPSum(root->getIdxInSibling());
       } else {
-        return ret + getParentFromBtmS(idxS / kBtmB)->calcPSum(getIdxInSiblingFromBtmS(idxS / kBtmB));
+        return ret + getParentFromBtmS(idxS / kBtmBS)->calcPSum(getIdxInSiblingFromBtmS(idxS / kBtmBS));
       }
     }
 
@@ -982,8 +1537,8 @@ namespace itmmti
       auto pos = rank - 1; // -1 for translating rank into 0base pos.
       const auto idxS = searchPosS(pos, rootS); // pos is modified to the relative pos
       const auto idxM = idxS2M(idxS);
-      pos += calcSumOfWeightOfBtmM(idxM / kBtmB, 0, idxM % kBtmB); // TODO: do this and next in parallel
-      return pos + getParentFromBtmM(idxM / kBtmB)->calcPSum(getIdxInSiblingFromBtmM(idxM / kBtmB));
+      pos += calcSumOfWeightOfBtmM(idxM / kBtmBM, 0, idxM % kBtmBM); // TODO: do this and next in parallel
+      return pos + getParentFromBtmM(idxM / kBtmBM)->calcPSum(getIdxInSiblingFromBtmM(idxM / kBtmBM));
     }
 
 
@@ -1058,22 +1613,8 @@ namespace itmmti
       assert(isReady());
       assert(pos < srootM_.root_->getSumOfWeight());
 
-      const auto btmM = reinterpret_cast<uint64_t>(srootM_.root_->searchPos(pos));
-      const auto & stcc = btmPtrsM_[btmM]->getConstRef_stcc();
-      uint8_t i = 0;
-      uint64_t bitPos = 0;
-      while (true) {
-        const auto w = stcc.readW(i);
-        const auto weight = stcc.readWBits(bitPos, w);
-        if (pos < weight) {
-          break;
-        }
-        ++i;
-        bitPos += w;
-        pos -= weight;
-      }
-
-      return btmM * kBtmB + i;
+      const auto btmM = reinterpret_cast<uintptr_t>(srootM_.root_->searchPos(pos));
+      return btmM * kBtmBM + btmMInfo_.searchPos(btmM, pos);
     }
 
 
@@ -1136,13 +1677,13 @@ namespace itmmti
 
       uint8_t idx = 0;
       while (true) {
-        const uint64_t idxM = idxS2M(btmS * kBtmB + idx);
+        const uint64_t idxM = idxS2M(btmS * kBtmBS + idx);
         auto weight = getWeightFromIdxM(idxM);
         if (pos >= weight) {
           pos -= weight;
           ++idx;
         } else {
-          return btmS * kBtmB + idx;
+          return btmS * kBtmBS + idx;
         }
       }
     }
@@ -1182,17 +1723,17 @@ namespace itmmti
       uint8_t ub = getNumChildrenFromBtmS(btmS);
       while (lb+1 != ub) {
         uint8_t mid = (lb + ub) / 2;
-        if (label < getLabelFromBtmM(idxS2M(btmS * kBtmB + mid) / kBtmB)) {
+        if (label < getLabelFromBtmM(idxS2M(btmS * kBtmBS + mid) / kBtmBM)) {
           ub = mid;
         } else {
           lb = mid;
         }
       }
-      return btmS * kBtmB + lb;
+      return btmS * kBtmBS + lb;
     }
 
 
-    uint64_t getPredIdxSFromIdxM
+    uint64_t calcPredIdxSFromIdxM
     (
      const BTreeNodeT * rootS,
      const uint64_t ch,
@@ -1203,26 +1744,25 @@ namespace itmmti
       // }
       assert(isValidIdxM(idxM));
 
-      const uint64_t btmM = idxM / kBtmB;
-      const auto btmNodeM = btmPtrsM_[btmM];
-      uint8_t i = (idxM % kBtmB) - 1;
+      const uint64_t btmM = idxM / kBtmBM;
+      uint8_t i = (idxM % kBtmBM) - 1;
       if (btmM) { // If btmM is not 0 (0 means btmM is the first btm in the mixed tree).
-        while (i < kBtmB && getCharFromIdxM(btmM * kBtmB + i) != ch) { // "i < kBtmB" breaks when "i becomes below 0"
+        while (i < kBtmBM && getCharFromIdxM(btmM * kBtmBM + i) != ch) { // "i < kBtmB" breaks when "i becomes below 0"
           --i;
         }
-        if (i < kBtmB) {
-          return idxM2S(btmM * kBtmB + i);
+        if (i < kBtmBM) {
+          return idxM2S(btmM * kBtmBM + i);
         } else {
-          return searchLabelS(btmNodeM->getBtmVal() - 1, rootS); // -1 is needed.
+          return searchLabelS(getLabelFromBtmM(btmM) - 1, rootS); // -1 is needed.
         }
       } else { // btmM == 0: dummy idx (== 0) should be ignored.
-        while (i > 0 && getCharFromIdxM(btmM * kBtmB + i) != ch) {
+        while (i > 0 && getCharFromIdxM(btmM * kBtmBM + i) != ch) {
           --i;
         }
         if (i > 0) {
           return idxM2S(i);
         } else {
-          return reinterpret_cast<uintptr_t>(rootS->getLmBtm_DirectJump()) * kBtmB;
+          return reinterpret_cast<uintptr_t>(rootS->getLmBtm_DirectJump()) * kBtmBS;
         }
       }
     }
@@ -1311,13 +1851,13 @@ namespace itmmti
      ) const noexcept {
       assert(isValidIdxM(idxM));
 
-      if (idxM % kBtmB) {
+      if (idxM % kBtmBM) {
         return idxM - 1;
       }
       const auto prevBtmM = reinterpret_cast<uint64_t>
-        (getParentFromBtmM(idxM / kBtmB)->getPrevBtm(getIdxInSiblingFromBtmM(idxM / kBtmB)));
+        (getParentFromBtmM(idxM / kBtmBM)->getPrevBtm(getIdxInSiblingFromBtmM(idxM / kBtmBM)));
       if (prevBtmM != BTreeNodeT::NOTFOUND) {
-        return prevBtmM * kBtmB + getNumChildrenFromBtmM(prevBtmM) - 1;
+        return prevBtmM * kBtmBM + getNumChildrenFromBtmM(prevBtmM) - 1;
       }
       return BTreeNodeT::NOTFOUND;
     }
@@ -1332,13 +1872,13 @@ namespace itmmti
      ) const noexcept {
       assert(isValidIdxM(idxM));
 
-      if ((idxM % kBtmB) + 1 < getNumChildrenFromBtmM(idxM / kBtmB)) {
+      if ((idxM % kBtmBM) + 1 < getNumChildrenFromBtmM(idxM / kBtmBM)) {
         return idxM + 1;
       }
       const auto nextBtmM = reinterpret_cast<uint64_t>
-        (getParentFromBtmM(idxM / kBtmB)->getNextBtm_DirectJump(getIdxInSiblingFromBtmM(idxM / kBtmB)));
+        (getParentFromBtmM(idxM / kBtmBM)->getNextBtm_DirectJump(getIdxInSiblingFromBtmM(idxM / kBtmBM)));
       if (nextBtmM != BTreeNodeT::NOTFOUND) {
-        return nextBtmM * kBtmB;
+        return nextBtmM * kBtmBM;
       }
       return BTreeNodeT::NOTFOUND;
     }
@@ -1414,13 +1954,13 @@ namespace itmmti
     uint64_t getPrevIdxS(const uint64_t idxS) const noexcept {
       assert(isValidIdxS(idxS));
 
-      if (idxS % kBtmB) {
+      if (idxS % kBtmBS) {
         return idxS - 1;
       }
       const auto prevBtmS = reinterpret_cast<uint64_t>
-        (getParentFromBtmS(idxS / kBtmB)->getPrevBtm(getIdxInSiblingFromBtmS(idxS / kBtmB)));
+        (getParentFromBtmS(idxS / kBtmBS)->getPrevBtm(getIdxInSiblingFromBtmS(idxS / kBtmBS)));
       if (prevBtmS != BTreeNodeT::NOTFOUND) {
-        return prevBtmS * kBtmB + getNumChildrenFromBtmS(prevBtmS) - 1;
+        return prevBtmS * kBtmBS + getNumChildrenFromBtmS(prevBtmS) - 1;
       }
       return BTreeNodeT::NOTFOUND;
     }
@@ -1429,13 +1969,13 @@ namespace itmmti
     uint64_t getNextIdxS(const uint64_t idxS) const noexcept {
       assert(isValidIdxS(idxS));
 
-      if ((idxS % kBtmB) + 1 < getNumChildrenFromBtmS(idxS / kBtmB)) {
+      if ((idxS % kBtmBS) + 1 < getNumChildrenFromBtmS(idxS / kBtmBS)) {
         return idxS + 1;
       }
       const auto nextBtmS = reinterpret_cast<uint64_t>
-        (getParentFromBtmS(idxS / kBtmB)->getNextBtm_DirectJump(getIdxInSiblingFromBtmS(idxS / kBtmB)));
+        (getParentFromBtmS(idxS / kBtmBS)->getNextBtm_DirectJump(getIdxInSiblingFromBtmS(idxS / kBtmBS)));
       if (nextBtmS != BTreeNodeT::NOTFOUND) {
-        return nextBtmS * kBtmB;
+        return nextBtmS * kBtmBS;
       }
       return BTreeNodeT::NOTFOUND;
     }
@@ -1450,7 +1990,7 @@ namespace itmmti
       } else {
         btmS = reinterpret_cast<uintptr_t>(nodeS);
       }
-      return getLabelFromBtmM(idxS2M(btmS * kBtmB) / kBtmB);
+      return getLabelFromBtmM(idxS2M(btmS * kBtmBS) / kBtmBM);
     }
 
 
@@ -1473,63 +2013,6 @@ namespace itmmti
     }
 
 
-    void reserveBtm(const size_t numBtms) {
-      const uint64_t numIdx = numBtms * kBtmB;
-      const uint8_t w = bits::bitSize(numIdx - 1);
-      if (sampleUb_) {
-        sample_.convert(sample_.getW(), numIdx);
-      }
-      idxM2S_.convert(w, numIdx);
-      idxS2M_.convert(w, numIdx);
-      memutil::realloc_AbortOnFail(btmPtrsM_, numBtms);
-      memutil::realloc_AbortOnFail(parentS_, numBtms);
-      memutil::realloc_AbortOnFail(charS_, numBtms);
-      memutil::realloc_AbortOnFail(idxInSiblingS_, numBtms);
-      memutil::realloc_AbortOnFail(numChildrenS_, numBtms);
-      traCode_ = TagRelabelAlgo::getSmallestTraCode(numBtms);
-    }
-
-
-    void expandBtm() {
-      const uint64_t newNum = 2 * idxM2S_.capacity() / kBtmB; // number of capacity of bottoms is doubled
-      reserveBtm(newNum);
-    }
-
-
-    uint64_t setNewBtmNodeM
-    (
-     BtmNodeM * btmNodeM
-     ) noexcept {
-      assert(btmNodeM != nullptr);
-
-      const uint64_t retBtmIdx = idxM2S_.size() / kBtmB;
-      if (retBtmIdx == idxM2S_.capacity() / kBtmB) {
-        expandBtm();
-      }
-      btmPtrsM_[retBtmIdx] = btmNodeM;
-      idxM2S_.resize((retBtmIdx + 1) * kBtmB);
-      sample_.resize((retBtmIdx + 1) * kBtmB);
-
-      return retBtmIdx;
-    }
-
-
-    uint64_t setNewBtmNodeS
-    (
-     const uint64_t ch
-     ) noexcept {
-      const uint64_t retBtmIdx = idxS2M_.size() / kBtmB;
-      if (retBtmIdx == idxS2M_.capacity() / kBtmB) {
-        expandBtm();
-      }
-      idxS2M_.resize((retBtmIdx + 1) * kBtmB);
-      charS_[retBtmIdx] = ch;
-      numChildrenS_[retBtmIdx] = 0;
-
-      return retBtmIdx;
-    }
-
-
     void asgnLabel
     (
      const uint64_t btmM
@@ -1538,7 +2021,7 @@ namespace itmmti
       uint64_t prev = getPrevBtmM(btmM); // assume that prev alwarys exists
       uint64_t base = (next == BTreeNodeT::NOTFOUND) ? TagRelabelAlgo::MAX_LABEL : getLabelFromBtmM(next);
       if (getLabelFromBtmM(prev) < base - 1) {
-        btmPtrsM_[btmM]->setBtmVal((getLabelFromBtmM(prev) + base) / 2);
+        btmMInfo_.setLabel(btmM, (getLabelFromBtmM(prev) + base) / 2);
         return;
       }
 
@@ -1569,7 +2052,7 @@ namespace itmmti
       uint64_t tmpLabel = base << l;
       const uint64_t interval = (UINT64_C(1) << l) / num;
       while (true) {
-        btmPtrsM_[tmpBtmM]->setBtmVal(tmpLabel);
+        btmMInfo_.setLabel(tmpBtmM, tmpLabel);
         if (--num == 0) {
           return;
         }
@@ -1602,35 +2085,6 @@ namespace itmmti
     }
 
 
-    uint64_t setupNewSTree
-    (
-     BTreeNodeT * predNode,
-     const uint64_t ch
-     ) {
-      // {//debug
-      //   std::cerr << __func__ << ": predNode = " << predNode << ", ch = " << ch << std::endl;
-      // }
-
-      const uint64_t newIdxS = idxS2M_.size();
-      const uint64_t btmS = newIdxS / kBtmB;
-      if (newIdxS + kBtmB >= idxS2M_.capacity()) {
-        expandBtm();
-      }
-      idxS2M_.resize(newIdxS + kBtmB);
-    
-      auto * newRootS = new BTreeNodeT(reinterpret_cast<void *>(btmS), true, true, true, false);
-      newRootS->putFirstBtm(reinterpret_cast<void *>(btmS), 0);
-      parentS_[btmS] = newRootS;
-      idxInSiblingS_[btmS] = 0;
-      charS_[btmS] = ch;
-      numChildrenS_[btmS] = 1; // only dummy idxS exists
-      idxS2M_.write(0, newIdxS); // link to dummy idxM of weight 0
-
-      predNode->getParent()->handleSplitOfChild(newRootS, predNode->getIdxInSibling());
-      return newIdxS;
-    }
-
-
     /*!
      * @brief Handle split btm node
      * @post
@@ -1657,25 +2111,25 @@ namespace itmmti
       if (numToL == 0) {
         for (uint8_t i = idxInSib + 1; i < uNode->getNumChildren(); ++i) {
           auto tmpBtmM = reinterpret_cast<uint64_t>(uNode->getChildPtr(i));
-          btmPtrsM_[tmpBtmM]->setParentRef(uNode, i);
+          btmMInfo_.setParentRefOfBtmM(tmpBtmM, uNode, i);
         }
         if (oriNum == kB) {
           auto * nextNode = uNode->getNextSib();
           for (uint8_t i = 0; i < nextNode->getNumChildren(); ++i) {
             auto tmpBtmM = reinterpret_cast<uint64_t>(nextNode->getChildPtr(i));
-            btmPtrsM_[tmpBtmM]->setParentRef(nextNode, i);
+            btmMInfo_.setParentRefOfBtmM(tmpBtmM, nextNode, i);
           }
         }
       } else {
         for (uint8_t i = 0; i < uNode->getNumChildren(); ++i) {
           auto tmpBtmM = reinterpret_cast<uint64_t>(uNode->getChildPtr(i));
-          btmPtrsM_[tmpBtmM]->setParentRef(uNode, i);
+          btmMInfo_.setParentRefOfBtmM(tmpBtmM, uNode, i);
         }
         auto * prevNode = uNode->getPrevSib();
         const uint8_t numL = prevNode->getNumChildren();
         for (uint8_t i = numL - (numToL + (idxInSib < numToL)); i < numL; ++i) {
           auto tmpBtmM = reinterpret_cast<uint64_t>(prevNode->getChildPtr(i));
-          btmPtrsM_[tmpBtmM]->setParentRef(prevNode, i);
+          btmMInfo_.setParentRefOfBtmM(tmpBtmM, prevNode, i);
         }
       }
 
@@ -1709,95 +2163,146 @@ namespace itmmti
       if (numToL == 0) {
         for (uint8_t i = idxInSib + 1; i < uNode->getNumChildren(); ++i) {
           uint64_t tmpBtmS = reinterpret_cast<uintptr_t>(uNode->getChildPtr(i));
-          parentS_[tmpBtmS] = uNode;
-          idxInSiblingS_[tmpBtmS] = i;
+          btmSInfo_.setParentRefOfBtmS(tmpBtmS, uNode, i);
         }
         if (oriNum == kB) {
           auto * nextNode = uNode->getNextSib();
           for (uint8_t i = 0; i < nextNode->getNumChildren(); ++i) {
             uint64_t tmpBtmS = reinterpret_cast<uintptr_t>(nextNode->getChildPtr(i));
-            parentS_[tmpBtmS] = nextNode;
-            idxInSiblingS_[tmpBtmS] = i;
+            btmSInfo_.setParentRefOfBtmS(tmpBtmS, nextNode, i);
           }
         }
       } else {
         for (uint8_t i = 0; i < uNode->getNumChildren(); ++i) {
           uint64_t tmpBtmS = reinterpret_cast<uintptr_t>(uNode->getChildPtr(i));
-          parentS_[tmpBtmS] = uNode;
-          idxInSiblingS_[tmpBtmS] = i;
+          btmSInfo_.setParentRefOfBtmS(tmpBtmS, uNode, i);
         }
         auto * prevNode = uNode->getPrevSib();
         const uint8_t numL = prevNode->getNumChildren();
         for (uint8_t i = numL - (numToL + (idxInSib < numToL)); i < numL; ++i) {
           uint64_t tmpBtmS = reinterpret_cast<uintptr_t>(prevNode->getChildPtr(i));
-          parentS_[tmpBtmS] = prevNode;
-          idxInSiblingS_[tmpBtmS] = i;
+          btmSInfo_.setParentRefOfBtmS(tmpBtmS, prevNode, i);
         }
       }
 
-      charS_[btmS2] = charS_[btmS1]; // set character of the btm node
+      btmSInfo_.setChar(btmS2, getCharFromBtmS(btmS1)); // set character of the btm node
     }
 
 
     void mvIdxRL
     (
-     WBitsVec & wba,
+     IdxLinksT & links,
      const uint64_t srcIdx,
      const uint64_t tgtIdx,
      const uint8_t num,
-     WBitsVec & wbaOther
+     IdxLinksT & linksOther
      ) noexcept {
       // {//debug
       //   std::cerr << __FUNCTION__ << ": tgtIdxBase = " << tgtIdxBase << ", srcIdx = " << (int)srcIdx << ", tgtIdx = " << (int)tgtIdx << ", num = " << (int)num
       //             << ", minSupportW = " << (int)minSupportW << ", kM? = " << (btmPtrs_other == btmPtrs_[kS]) << std::endl;
       // }
-      assert(srcIdx % kBtmB + num <= static_cast<uint64_t>(kBtmB));
-      assert(tgtIdx % kBtmB + num <= static_cast<uint64_t>(kBtmB));
-
       for (uint8_t i = num; i > 0; --i) {
-        const uint64_t idxOther = wba.read(srcIdx + i - 1);
-        wba.write(idxOther, tgtIdx + i - 1);
-        wbaOther.write(tgtIdx + i - 1, idxOther);
+        const uint64_t idxOther = links.read(srcIdx + i - 1);
+        links.write(idxOther, tgtIdx + i - 1);
+        linksOther.write(tgtIdx + i - 1, idxOther);
       }
     }
 
 
     void mvIdxLR
     (
-     WBitsVec & wba,
+     IdxLinksT & links,
      const uint64_t srcIdx,
      const uint64_t tgtIdx,
      const uint8_t num,
-     WBitsVec & wbaOther
+     IdxLinksT & linksOther
      ) noexcept {
       // {//debug
       //   std::cerr << __FUNCTION__ << ": tgtIdxBase = " << tgtIdxBase << ", srcIdx = " << (int)srcIdx << ", tgtIdx = " << (int)tgtIdx << ", num = " << (int)num
       //             << ", minSupportW = " << (int)minSupportW << ", kM? = " << (btmPtrs_other == btmPtrs_[kS]) << std::endl;
       // }
-      assert(srcIdx % kBtmB + num <= static_cast<uint64_t>(kBtmB));
-      assert(tgtIdx % kBtmB + num <= static_cast<uint64_t>(kBtmB));
-
       for (uint8_t i = 0; i < num; ++i) {
-        const uint64_t idxOther = wba.read(srcIdx + i);
-        wba.write(idxOther, tgtIdx + i);
-        wbaOther.write(tgtIdx + i, idxOther);
+        const uint64_t idxOther = links.read(srcIdx + i);
+        links.write(idxOther, tgtIdx + i);
+        linksOther.write(tgtIdx + i, idxOther);
       }
     }
 
 
-    void mvSample
+    void mvSamples
     (
      const uint64_t srcIdx,
      const uint64_t tgtIdx,
      const uint8_t num
      ) noexcept {
-      // {//debug
-      //   std::cerr << __FUNCTION__ << ": tgtIdxBase = " << tgtIdxBase << ", srcIdx = " << (int)srcIdx << ", tgtIdx = " << (int)tgtIdx << ", num = " << (int)num
-      //             << ", minSupportW = " << (int)minSupportW << ", kM? = " << (btmPtrs_other == btmPtrs_[kS]) << std::endl;
-      // }
-      if (sampleUb_) {
-        mvWBA_SameW(sample_.getItrAt(srcIdx), sample_.getItrAt(tgtIdx), num);
+      if (srcIdx >= tgtIdx) {
+        for (uint8_t i = 0; i < num; ++i) {
+          samples_.write(samples_.read(srcIdx + i), tgtIdx + i);
+        }
+      } else {
+        for (uint8_t i = num - 1; i != UINT8_MAX; --i) {
+          samples_.write(samples_.read(srcIdx + i), tgtIdx + i);
+        }
       }
+    }
+
+
+    uint64_t setNewBtmNodeM() {
+      const uint64_t retBtmIdx = getNumBtmM();
+      const uint64_t newIdxSize = (retBtmIdx + 1) * kBtmBM;
+      btmMInfo_.resize(retBtmIdx + 1);
+      idxM2S_.resize(newIdxSize);
+      samples_.resize(newIdxSize);
+      {
+        const auto w = idxS2M_.getW();
+        if (newIdxSize > bits::UINTW_MAX(w)) {
+          idxS2M_.increaseW(w + 1);
+        }
+      }
+
+      return retBtmIdx;
+    }
+
+
+    uint64_t setNewBtmNodeS
+    (
+     const CharT ch
+     ) {
+      const uint64_t retBtmIdx = getNumBtmS();
+      const uint64_t newIdxSize = (retBtmIdx + 1) * kBtmBS;
+      btmSInfo_.resize(retBtmIdx + 1);
+      btmSInfo_.setChar(retBtmIdx, ch);
+      idxS2M_.resize(newIdxSize);
+      {
+        const auto w = idxM2S_.getW();
+        if (newIdxSize > bits::UINTW_MAX(w)) {
+          idxM2S_.increaseW(w + 1);
+        }
+      }
+
+      return retBtmIdx;
+    }
+
+
+    uint64_t setupNewSTree
+    (
+     BTreeNodeT * predNode,
+     const uint64_t ch
+     ) {
+      // {//debug
+      //   std::cerr << __func__ << ": predNode = " << predNode << ", ch = " << ch << std::endl;
+      // }
+      const uint64_t btmS = setNewBtmNodeS(ch);
+      const uint64_t newIdxS = btmS * kBtmBS;
+    
+      auto * newRootS = new BTreeNodeT(reinterpret_cast<void *>(btmS), true, true, true, false);
+      newRootS->putFirstBtm(reinterpret_cast<void *>(btmS), 0);
+      btmSInfo_.setParentRefOfBtmS(btmS, newRootS, 0);
+      btmSInfo_.setNumChildren(btmS, 1); // only dummy idxS exists
+      idxS2M_.write(0, newIdxS); // link to dummy idxM of weight 0
+
+      predNode->getParent()->handleSplitOfChild(newRootS, predNode->getIdxInSibling());
+      return newIdxS;
     }
 
 
@@ -1814,36 +2319,32 @@ namespace itmmti
       //             << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << ", insertMorS = " << insertMorS << std::endl;
       //   // btmPtrs_[insertMorS][idxBase / kBtmB]->printDebugInfo(std::cerr);
       // }
-
-      auto btmNodeM = btmPtrsM_[idxM / kBtmB];
-      const uint8_t childIdx = idxM % kBtmB;
+      auto & btmNodeM = btmMInfo_.getBtmNodeRef(idxM / kBtmBM);
+      const uint8_t childIdx = idxM % kBtmBM;
       uint16_t sumW_del = 0;
       for (uint8_t i = 0; i < numChild_del; ++i) {
-        sumW_del = btmNodeM->stcc_.readW(childIdx + i);
+        sumW_del = btmNodeM.stcc_.readW(childIdx + i);
       }
 
-      const uint8_t tailNum = btmNodeM->numChildren_ - (childIdx + numChild_del); // at least 0 by assumption.
+      const uint8_t tailNum = btmNodeM.numChildren_ - (childIdx + numChild_del); // at least 0 by assumption.
       uint16_t tailW = 0;
       if (tailNum) {
-        tailW = btmNodeM->stccSize_ - btmNodeM->calcBitPos(childIdx + numChild_del);
-        btmNodeM->stcc_.mvWCodes(btmNodeM->stcc_.getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, tailNum);
-        if (numChild_ins > numChild_del) {
-          mvIdxRL(idxM2S_, idxM + numChild_del, idxM + numChild_ins, tailNum, idxS2M_);
-        } else {
-          mvIdxLR(idxM2S_, idxM + numChild_del, idxM + numChild_ins, tailNum, idxS2M_);
-        }
-        mvSample(idxM + numChild_del, idxM + numChild_ins, tailNum);
+        tailW = btmNodeM.stccSize_ - btmNodeM.calcBitPos(childIdx + numChild_del);
+        btmNodeM.stcc_.mvWCodes(btmNodeM.stcc_.getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, tailNum);
+        //// Assume for simplicity that numChild_ins > numChild_del, and thus call mvIdxRL
+        mvIdxRL(idxM2S_, idxM + numChild_del, idxM + numChild_ins, tailNum, idxS2M_);
+        mvSamples(idxM + numChild_del, idxM + numChild_ins, tailNum);
       }
-      btmNodeM->stcc_.mvWCodes(srcWCodes, 0, childIdx, numChild_ins);
-      btmNodeM->numChildren_ += numChild_ins - numChild_del;
-      btmNodeM->updateWCodesAuxM(childIdx, btmNodeM->numChildren_);
+      btmNodeM.stcc_.mvWCodes(srcWCodes, 0, childIdx, numChild_ins);
+      btmNodeM.numChildren_ += numChild_ins - numChild_del;
+      btmNodeM.updateWCodesAuxM(childIdx, btmNodeM.numChildren_);
       if (sumW_ins != sumW_del) {
-        const uint16_t newBitSize = btmNodeM->stccSize_ + sumW_ins - sumW_del;
-        btmNodeM->reserveBitCapacity(newBitSize);
+        const uint16_t newBitSize = btmNodeM.stccSize_ + sumW_ins - sumW_del;
+        btmNodeM.reserveBitCapacity(newBitSize);
         if (tailNum) {
-          btmNodeM->stcc_.mvVals(btmNodeM->stcc_.getConstPtr_vals(), btmNodeM->stccSize_ - tailW, newBitSize - tailW, tailW);
+          btmNodeM.stcc_.mvVals(btmNodeM.stcc_.getConstPtr_vals(), btmNodeM.stccSize_ - tailW, newBitSize - tailW, tailW);
         }
-        btmNodeM->stccSize_ = newBitSize;
+        btmNodeM.stccSize_ = newBitSize;
       }
     }
 
@@ -1858,110 +2359,109 @@ namespace itmmti
      const uint8_t numChild_del //!< Length of wCodes of tgt to delete.
      ) noexcept {
       // {//debug
-      //   std::cerr << __FUNCTION__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = "
-      //             << (int)childIdx << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << ", insertMorS = " << insertMorS << std::endl;
+      //   std::cerr << __func__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = " << (int)childIdx
+      //             << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << std::endl;
       // }
-      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(rIdxBase / kBtmB));
+      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(rIdxBase / kBtmBM));
 
-      auto lnode = btmPtrsM_[lIdxBase / kBtmB];
-      auto rnode = btmPtrsM_[rIdxBase / kBtmB];
+      auto & lnode = btmMInfo_.getBtmNodeRef(lIdxBase / kBtmBM);
+      auto & rnode = btmMInfo_.getBtmNodeRef(rIdxBase / kBtmBM);
 
       std::tuple<uint64_t, uint64_t, uint64_t> changeList[2];
       uint8_t clSize = 0;
-      const uint8_t numL_old = lnode->getNumChildren();
-      const uint8_t numR_old = rnode->getNumChildren();
+      const uint8_t numL_old = lnode.getNumChildren();
+      const uint8_t numR_old = rnode.getNumChildren();
       const uint8_t numTotal = numL_old + numR_old + numChild_ins - numChild_del;
-      const uint8_t numL_new = numTotal / 2;
+      const uint8_t numOldMid = (numL_old + numR_old) / 2;
+      const bool isNewElemInL = numL_old + childIdx < numOldMid;
+      const uint8_t numL_new = (isNewElemInL) ? numOldMid + numChild_ins - numChild_del : numOldMid;
       const uint8_t numR_new = numTotal - numL_new;
       const uint8_t numToLeft = numL_new - numL_old;
-      const bool isNewElemInL = childIdx < numToLeft;
-      const bool isNewElemInR = childIdx + numChild_ins > numToLeft;
-      uint16_t sumWL = lnode->stccSize_;
+
+      uint16_t sumWL = lnode.stccSize_;
       uint8_t numL = numL_old;
       uint8_t curNumAfterDel = 0;
-      uint8_t curNumSrcWCodes = 0;
       {
         const auto num = (isNewElemInL)? childIdx : numToLeft;
         if (num) {
-          const auto w = rnode->calcBitPos(num);
+          const auto w = rnode.calcBitPos(num);
           changeList[clSize++] = {0, sumWL, w};
           sumWL += w;
-          lnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), 0, numL, num);
+          lnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), 0, numL, num);
           mvIdxLR(idxM2S_, rIdxBase, lIdxBase + numL, num, idxS2M_);
-          mvSample(rIdxBase, lIdxBase + numL, num);
+          mvSamples(rIdxBase, lIdxBase + numL, num);
           numL += num;
         }
       }
       if (isNewElemInL) {
-        curNumSrcWCodes = std::min(static_cast<uint8_t>(numToLeft - childIdx), numChild_ins);
-        sumWL += StepCodeUtil::sumW(srcWCodes, 0, curNumSrcWCodes);
-        lnode->stcc_.mvWCodes(srcWCodes, 0, numL, curNumSrcWCodes);
-        numL += curNumSrcWCodes;
+        sumWL += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
+        lnode.stcc_.mvWCodes(srcWCodes, 0, numL, numChild_ins);
+        numL += numChild_ins;
         if (numL < numL_new) { // Still need to move elements to left after inserting srcWCodes
           curNumAfterDel = numL_new - numL;
-          const auto w = rnode->stcc_.sumW(childIdx + numChild_del, childIdx + numChild_del + curNumAfterDel);
-          changeList[clSize++] = {rnode->calcBitPos(childIdx + numChild_del), sumWL, w};
+          const auto w = rnode.stcc_.sumW(childIdx + numChild_del, childIdx + numChild_del + curNumAfterDel);
+          changeList[clSize++] = {rnode.calcBitPos(childIdx + numChild_del), sumWL, w};
           sumWL += w;
-          lnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), childIdx + numChild_del, numL, curNumAfterDel);
+          lnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), childIdx + numChild_del, numL, curNumAfterDel);
           mvIdxLR(idxM2S_, rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel, idxS2M_);
-          mvSample(rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel);
+          mvSamples(rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel);
         }
       }
-      lnode->numChildren_ = numL_new;
-      lnode->updateWCodesAuxM(numL_old, numL_new);
+      lnode.numChildren_ = numL_new;
+      lnode.updateWCodesAuxM(numL_old, numL_new);
       { // Update vals of lnode.
-        lnode->reserveBitCapacity(sumWL);
+        lnode.reserveBitCapacity(sumWL);
         for (uint8_t i = 0; i < clSize; ++i) {
-          lnode->stcc_.mvVals(rnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
+          lnode.stcc_.mvVals(rnode.getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
         }
-        lnode->stccSize_ = sumWL;
+        lnode.stccSize_ = sumWL;
       }
 
       // Update rnode.
       clSize = 0;
-      const uint16_t bitPosOfLastChunk = rnode->calcBitPos(childIdx + numChild_del + curNumAfterDel);
-      const uint16_t bitSizeOfLastChunk = rnode->stccSize_ - bitPosOfLastChunk;
+      const uint16_t bitPosOfLastChunk = rnode.calcBitPos(childIdx + numChild_del + curNumAfterDel);
+      const uint16_t bitSizeOfLastChunk = rnode.stccSize_ - bitPosOfLastChunk;
       uint16_t sumWR = bitSizeOfLastChunk;
       if (numToLeft < childIdx) {
         const uint8_t num = childIdx - numToLeft;
-        const uint16_t bitPos = rnode->calcBitPos(numToLeft);
-        const uint16_t w = rnode->calcBitPos(childIdx) - bitPos;
+        const uint16_t bitPos = rnode.calcBitPos(numToLeft);
+        const uint16_t w = rnode.calcBitPos(childIdx) - bitPos;
         sumWR += w;
         changeList[clSize++] = {bitPos, 0, w};
-        rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), numToLeft, 0, num);
+        rnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), numToLeft, 0, num);
         mvIdxLR(idxM2S_, rIdxBase + numToLeft, rIdxBase, num, idxS2M_);
-        mvSample(rIdxBase + numToLeft, rIdxBase, num);
+        mvSamples(rIdxBase + numToLeft, rIdxBase, num);
       }
-      if (isNewElemInR) {
-        sumWR += StepCodeUtil::sumW(srcWCodes, curNumSrcWCodes, numChild_ins);
+      if (!isNewElemInL) {
+        sumWR += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
       }
       if (numR_old != childIdx + numChild_del) { // There are remaining children in tail.
         if (numR_old != numR_new) { // Need shift wCodes of "this" node.
           const uint8_t srcBeg = childIdx + numChild_del + curNumAfterDel;
           const uint8_t num = numR_old - srcBeg;
           const uint8_t tgtBeg = numR_new - num;
-          rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), srcBeg, tgtBeg, num);
+          rnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), srcBeg, tgtBeg, num);
           if (tgtBeg < srcBeg) {
             mvIdxLR(idxM2S_, rIdxBase + srcBeg, rIdxBase + tgtBeg, num, idxS2M_);
           } else {
             mvIdxRL(idxM2S_, rIdxBase + srcBeg, rIdxBase + tgtBeg, num, idxS2M_);
           }
-          mvSample(rIdxBase + srcBeg, rIdxBase + tgtBeg, num);
+          mvSamples(rIdxBase + srcBeg, rIdxBase + tgtBeg, num);
         }
         changeList[clSize++] = {bitPosOfLastChunk, sumWR - bitSizeOfLastChunk, bitSizeOfLastChunk};
       }
-      if (isNewElemInR) {
-        const uint8_t num = numChild_ins - curNumSrcWCodes;
-        rnode->stcc_.mvWCodes(srcWCodes, curNumSrcWCodes, childIdx + curNumSrcWCodes - numToLeft, num);
+      if (!isNewElemInL) {
+        rnode.stcc_.mvWCodes(srcWCodes, 0, childIdx - numToLeft, numChild_ins);
       }
-      rnode->numChildren_ = numR_new;
-      rnode->updateWCodesAuxM(0, numR_new);
+      rnode.numChildren_ = numR_new;
+      rnode.updateWCodesAuxM(0, numR_new);
       { // Update vals of rnode
-        rnode->reserveBitCapacity(sumWR);
+        rnode.reserveBitCapacity(sumWR);
         for (uint8_t i = 0; i < clSize; ++i) {
-          rnode->stcc_.mvVals(rnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
+          rnode.stcc_.mvVals(rnode.getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
         }
-        rnode->stccSize_ = sumWR;
+        rnode.stccSize_ = sumWR;
+        rnode.shrinkBitCapacity();
       }
 
       return (isNewElemInL) ? lIdxBase + numL_old + childIdx : rIdxBase + childIdx - numToLeft;
@@ -1978,269 +2478,18 @@ namespace itmmti
      const uint8_t numChild_del //!< Length of wCodes of tgt to delete.
      ) noexcept {
       // {//debug
-      //   std::cerr << __FUNCTION__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = "
-      //             << (int)childIdx << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << ", insertMorS = " << insertMorS << std::endl;
-      // }
-      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(lIdxBase / kBtmB));
-
-      auto lnode = btmPtrsM_[lIdxBase / kBtmB];
-      auto rnode = btmPtrsM_[rIdxBase / kBtmB];
-
-      std::tuple<uint64_t, uint64_t, uint64_t> changeList[2];
-      uint8_t clSize = 0;
-      const uint8_t numL_old = lnode->getNumChildren();
-      const uint8_t numR_old = rnode->getNumChildren();
-      const uint8_t numTotal = numL_old + numR_old + numChild_ins - numChild_del;
-      const uint8_t numL_new = numTotal / 2;
-      const uint8_t numR_new = numTotal - numL_new;
-      const uint8_t numToRight = numR_new - numR_old;
-
-      uint8_t numSrcWCodesInL = 0;
-      uint8_t numToRight1 = 0;
-      uint8_t numToRight2 = 0;
-      if (childIdx < numL_new) { // new elements are in L
-        if (childIdx + numChild_ins <= numL_new) { // new elements are only in L
-          numSrcWCodesInL = numChild_ins;
-          numToRight2 = numToRight;
-        } else { // new elements are also in R
-          numSrcWCodesInL = numL_new - childIdx;
-          numToRight2 = numL_old - (childIdx + numChild_del);
-          // {
-          //   std::cerr << "koko: numToRight2 = " << numToRight2 << std::endl;
-          // }
-        }
-      } else { // new elements are in R
-        numToRight1 = childIdx - numL_new;
-        numToRight2 = numL_old - (childIdx + numChild_del);
-      }
-
-      if (numR_old) { // shift wCodes of R to make space
-        rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), 0, numToRight, numR_old);
-        mvIdxRL(idxM2S_, rIdxBase, rIdxBase + numToRight, numR_old, idxS2M_);
-        mvSample(rIdxBase, rIdxBase + numToRight, numR_old);
-      }
-
-      uint8_t numR_increment = 0;
-      uint16_t sumWR_increment = 0;
-      if (numToRight1) {
-        const uint16_t bitPos = lnode->calcBitPos(childIdx - numToRight1);
-        const uint16_t w = lnode->calcBitPos(childIdx) - bitPos;
-        changeList[clSize++] = {bitPos, 0, w};
-        sumWR_increment += w;
-        rnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), childIdx - numToRight1, 0, numToRight1);
-        mvIdxLR(idxM2S_, lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1, idxS2M_);
-        mvSample(lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1);
-        numR_increment += numToRight1;
-      }
-      if (numSrcWCodesInL != numChild_ins) {
-        sumWR_increment += StepCodeUtil::sumW(srcWCodes, numSrcWCodesInL, numChild_ins);
-        rnode->stcc_.mvWCodes(srcWCodes, numSrcWCodesInL, numR_increment, numChild_ins - numSrcWCodesInL);
-        numR_increment += (numChild_ins - numSrcWCodesInL);
-      }
-      if (numToRight2) {
-        const uint16_t bitPos = lnode->calcBitPos(numL_old - numToRight2);
-        const uint16_t w = lnode->stccSize_ - bitPos;
-        changeList[clSize++] = {bitPos, sumWR_increment, w};
-        sumWR_increment += w;
-        rnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), numL_old - numToRight2, numR_increment, numToRight2);
-        mvIdxLR(idxM2S_, lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2, idxS2M_);
-        mvSample(lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2);
-      }
-      rnode->numChildren_ = numR_new;
-      rnode->updateWCodesAuxM(0, numR_new);
-      { // Update vals of "rnode".
-        rnode->reserveBitCapacity(rnode->stccSize_ + sumWR_increment);
-        if (numR_old) {
-          rnode->stcc_.mvVals(rnode->getConstPtr_vals(), 0, sumWR_increment, rnode->stccSize_);
-        }
-        for (uint8_t i = 0; i < clSize; ++i) {
-          rnode->stcc_.mvVals(lnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
-        }
-        rnode->stccSize_ += sumWR_increment;
-      }
-
-      if (numSrcWCodesInL) {
-        // {
-        //   std::cerr << "numSrcWCodesInL = " << numSrcWCodesInL << std::endl;
-        // }
-        const uint16_t sumWL_ins = static_cast<uint16_t>(StepCodeUtil::sumW(srcWCodes, 0, numSrcWCodesInL));
-        const uint16_t tailBitPos_new = lnode->calcBitPos(childIdx) + sumWL_ins;
-        lnode->stccSize_ = tailBitPos_new;
-        const uint8_t numTail = numL_new - (childIdx + numSrcWCodesInL);
-        if (numTail) {
-          const uint16_t tailBitPos_old = lnode->calcBitPos(childIdx + numChild_del);
-          const uint16_t w = lnode->calcBitPos(childIdx + numChild_del + numTail) - tailBitPos_old;
-          lnode->stccSize_ += w;
-          if (tailBitPos_new != tailBitPos_old) {
-            lnode->reserveBitCapacity(lnode->stccSize_);
-            lnode->stcc_.mvVals(lnode->getConstPtr_vals(), tailBitPos_old, tailBitPos_new, w);
-          }
-          if (numChild_ins != numChild_del) {
-            lnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, numTail);
-            if (numChild_ins > numChild_del) {
-              mvIdxRL(idxM2S_, lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail, idxS2M_);
-            } else {
-              mvIdxLR(idxM2S_, lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail, idxS2M_);
-            }
-            mvSample(lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail);
-          }
-        } else {
-          lnode->reserveBitCapacity(lnode->stccSize_);
-        }
-        lnode->stcc_.mvWCodes(srcWCodes, 0, childIdx, numSrcWCodesInL);
-        lnode->updateWCodesAuxM(childIdx, numL_new);
-      } else { // shrink
-        lnode->stccSize_ = lnode->calcBitPos(numL_new); // shrink (just change bitSize)
-        lnode->shrinkBitCapacity();
-        lnode->updateWCodesAuxM(numL_new - 1, numL_new);
-      }
-      lnode->numChildren_ = numL_new;
-
-      return (numSrcWCodesInL) ? lIdxBase + childIdx : rIdxBase + childIdx - numL_new;
-    }
-
-
-    uint64_t overflowToLeftM_simple
-    (
-     const uint64_t lIdxBase,
-     const uint64_t rIdxBase,
-     const uint8_t childIdx,
-     const uint64_t * srcWCodes,
-     const uint8_t numChild_ins,
-     const uint8_t numChild_del //!< Length of wCodes of tgt to delete.
-     ) noexcept {
-      // {//debug
       //   std::cerr << __func__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = " << (int)childIdx
       //             << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << std::endl;
       // }
-      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(rIdxBase / kBtmB));
+      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(lIdxBase / kBtmBM));
 
-      auto lnode = btmPtrsM_[lIdxBase / kBtmB];
-      auto rnode = btmPtrsM_[rIdxBase / kBtmB];
-
-      std::tuple<uint64_t, uint64_t, uint64_t> changeList[2];
-      uint8_t clSize = 0;
-      const uint8_t numL_old = lnode->getNumChildren();
-      const uint8_t numR_old = rnode->getNumChildren();
-      const uint8_t numTotal = numL_old + numR_old + numChild_ins - numChild_del;
-      const uint8_t numOldMid = (numL_old + numR_old) / 2;
-      const bool isNewElemInL = numL_old + childIdx < numOldMid;
-      const uint8_t numL_new = (isNewElemInL) ? numOldMid + numChild_ins - numChild_del : numOldMid;
-      const uint8_t numR_new = numTotal - numL_new;
-      const uint8_t numToLeft = numL_new - numL_old;
-
-      uint16_t sumWL = lnode->stccSize_;
-      uint8_t numL = numL_old;
-      uint8_t curNumAfterDel = 0;
-      {
-        const auto num = (isNewElemInL)? childIdx : numToLeft;
-        if (num) {
-          const auto w = rnode->calcBitPos(num);
-          changeList[clSize++] = {0, sumWL, w};
-          sumWL += w;
-          lnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), 0, numL, num);
-          mvIdxLR(idxM2S_, rIdxBase, lIdxBase + numL, num, idxS2M_);
-          mvSample(rIdxBase, lIdxBase + numL, num);
-          numL += num;
-        }
-      }
-      if (isNewElemInL) {
-        sumWL += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
-        lnode->stcc_.mvWCodes(srcWCodes, 0, numL, numChild_ins);
-        numL += numChild_ins;
-        if (numL < numL_new) { // Still need to move elements to left after inserting srcWCodes
-          curNumAfterDel = numL_new - numL;
-          const auto w = rnode->stcc_.sumW(childIdx + numChild_del, childIdx + numChild_del + curNumAfterDel);
-          changeList[clSize++] = {rnode->calcBitPos(childIdx + numChild_del), sumWL, w};
-          sumWL += w;
-          lnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), childIdx + numChild_del, numL, curNumAfterDel);
-          mvIdxLR(idxM2S_, rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel, idxS2M_);
-          mvSample(rIdxBase + childIdx + numChild_del, lIdxBase + numL, curNumAfterDel);
-        }
-      }
-      lnode->numChildren_ = numL_new;
-      lnode->updateWCodesAuxM(numL_old, numL_new);
-      { // Update vals of lnode.
-        lnode->reserveBitCapacity(sumWL);
-        for (uint8_t i = 0; i < clSize; ++i) {
-          lnode->stcc_.mvVals(rnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
-        }
-        lnode->stccSize_ = sumWL;
-      }
-
-      // Update rnode.
-      clSize = 0;
-      const uint16_t bitPosOfLastChunk = rnode->calcBitPos(childIdx + numChild_del + curNumAfterDel);
-      const uint16_t bitSizeOfLastChunk = rnode->stccSize_ - bitPosOfLastChunk;
-      uint16_t sumWR = bitSizeOfLastChunk;
-      if (numToLeft < childIdx) {
-        const uint8_t num = childIdx - numToLeft;
-        const uint16_t bitPos = rnode->calcBitPos(numToLeft);
-        const uint16_t w = rnode->calcBitPos(childIdx) - bitPos;
-        sumWR += w;
-        changeList[clSize++] = {bitPos, 0, w};
-        rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), numToLeft, 0, num);
-        mvIdxLR(idxM2S_, rIdxBase + numToLeft, rIdxBase, num, idxS2M_);
-        mvSample(rIdxBase + numToLeft, rIdxBase, num);
-      }
-      if (!isNewElemInL) {
-        sumWR += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
-      }
-      if (numR_old != childIdx + numChild_del) { // There are remaining children in tail.
-        if (numR_old != numR_new) { // Need shift wCodes of "this" node.
-          const uint8_t srcBeg = childIdx + numChild_del + curNumAfterDel;
-          const uint8_t num = numR_old - srcBeg;
-          const uint8_t tgtBeg = numR_new - num;
-          rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), srcBeg, tgtBeg, num);
-          if (tgtBeg < srcBeg) {
-            mvIdxLR(idxM2S_, rIdxBase + srcBeg, rIdxBase + tgtBeg, num, idxS2M_);
-          } else {
-            mvIdxRL(idxM2S_, rIdxBase + srcBeg, rIdxBase + tgtBeg, num, idxS2M_);
-          }
-          mvSample(rIdxBase + srcBeg, rIdxBase + tgtBeg, num);
-        }
-        changeList[clSize++] = {bitPosOfLastChunk, sumWR - bitSizeOfLastChunk, bitSizeOfLastChunk};
-      }
-      if (!isNewElemInL) {
-        rnode->stcc_.mvWCodes(srcWCodes, 0, childIdx - numToLeft, numChild_ins);
-      }
-      rnode->numChildren_ = numR_new;
-      rnode->updateWCodesAuxM(0, numR_new);
-      { // Update vals of rnode
-        rnode->reserveBitCapacity(sumWR);
-        for (uint8_t i = 0; i < clSize; ++i) {
-          rnode->stcc_.mvVals(rnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
-        }
-        rnode->stccSize_ = sumWR;
-        rnode->shrinkBitCapacity();
-      }
-
-      return (isNewElemInL) ? lIdxBase + numL_old + childIdx : rIdxBase + childIdx - numToLeft;
-    }
-
-
-    uint64_t overflowToRightM_simple
-    (
-     const uint64_t lIdxBase,
-     const uint64_t rIdxBase,
-     const uint8_t childIdx,
-     const uint64_t * srcWCodes,
-     const uint8_t numChild_ins,
-     const uint8_t numChild_del //!< Length of wCodes of tgt to delete.
-     ) noexcept {
-      // {//debug
-      //   std::cerr << __func__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = " << (int)childIdx
-      //             << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << std::endl;
-      // }
-      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(lIdxBase / kBtmB));
-
-      auto lnode = btmPtrsM_[lIdxBase / kBtmB];
-      auto rnode = btmPtrsM_[rIdxBase / kBtmB];
+      auto & lnode = btmMInfo_.getBtmNodeRef(lIdxBase / kBtmBM);
+      auto & rnode = btmMInfo_.getBtmNodeRef(rIdxBase / kBtmBM);
 
       std::tuple<uint64_t, uint64_t, uint64_t> changeList[2];
       uint8_t clSize = 0;
-      const uint8_t numL_old = lnode->getNumChildren();
-      const uint8_t numR_old = rnode->getNumChildren();
+      const uint8_t numL_old = lnode.getNumChildren();
+      const uint8_t numR_old = rnode.getNumChildren();
       const uint8_t numOldTotal = numL_old + numR_old;
       const uint8_t numOldMid = numOldTotal / 2;
       const bool isNewElemInL = (childIdx < numOldMid);
@@ -2260,48 +2509,48 @@ namespace itmmti
       const uint8_t numToRight = numR_new - numR_old;
 
       if (numR_old) { // shift wCodes of R to make space
-        rnode->stcc_.mvWCodes(rnode->getConstPtr_wCodes(), 0, numToRight, numR_old);
+        rnode.stcc_.mvWCodes(rnode.getConstPtr_wCodes(), 0, numToRight, numR_old);
         mvIdxRL(idxM2S_, rIdxBase, rIdxBase + numToRight, numR_old, idxS2M_);
-        mvSample(rIdxBase, rIdxBase + numToRight, numR_old);
+        mvSamples(rIdxBase, rIdxBase + numToRight, numR_old);
       }
 
       uint8_t numR_increment = 0;
       uint16_t sumWR_increment = 0;
       if (numToRight1) {
-        const uint16_t bitPos = lnode->calcBitPos(childIdx - numToRight1);
-        const uint16_t w = lnode->calcBitPos(childIdx) - bitPos;
+        const uint16_t bitPos = lnode.calcBitPos(childIdx - numToRight1);
+        const uint16_t w = lnode.calcBitPos(childIdx) - bitPos;
         changeList[clSize++] = {bitPos, 0, w};
         sumWR_increment += w;
-        rnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), childIdx - numToRight1, 0, numToRight1);
+        rnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), childIdx - numToRight1, 0, numToRight1);
         mvIdxLR(idxM2S_, lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1, idxS2M_);
-        mvSample(lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1);
+        mvSamples(lIdxBase + childIdx - numToRight1, rIdxBase, numToRight1);
         numR_increment += numToRight1;
       }
       if (!isNewElemInL) {
         sumWR_increment += StepCodeUtil::sumW(srcWCodes, 0, numChild_ins);
-        rnode->stcc_.mvWCodes(srcWCodes, 0, numToRight1, numChild_ins);
+        rnode.stcc_.mvWCodes(srcWCodes, 0, numToRight1, numChild_ins);
         numR_increment += numChild_ins;
       }
       if (numToRight2) {
-        const uint16_t bitPos = lnode->calcBitPos(numL_old - numToRight2);
-        const uint16_t w = lnode->stccSize_ - bitPos;
+        const uint16_t bitPos = lnode.calcBitPos(numL_old - numToRight2);
+        const uint16_t w = lnode.stccSize_ - bitPos;
         changeList[clSize++] = {bitPos, sumWR_increment, w};
         sumWR_increment += w;
-        rnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), numL_old - numToRight2, numR_increment, numToRight2);
+        rnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), numL_old - numToRight2, numR_increment, numToRight2);
         mvIdxLR(idxM2S_, lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2, idxS2M_);
-        mvSample(lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2);
+        mvSamples(lIdxBase + numL_old - numToRight2, rIdxBase + numR_increment, numToRight2);
       }
-      rnode->numChildren_ = numR_new;
-      rnode->updateWCodesAuxM(0, numR_new);
+      rnode.numChildren_ = numR_new;
+      rnode.updateWCodesAuxM(0, numR_new);
       { // Update vals of "rnode".
-        rnode->reserveBitCapacity(rnode->stccSize_ + sumWR_increment);
+        rnode.reserveBitCapacity(rnode.stccSize_ + sumWR_increment);
         if (numR_old) {
-          rnode->stcc_.mvVals(rnode->getConstPtr_vals(), 0, sumWR_increment, rnode->stccSize_);
+          rnode.stcc_.mvVals(rnode.getConstPtr_vals(), 0, sumWR_increment, rnode.stccSize_);
         }
         for (uint8_t i = 0; i < clSize; ++i) {
-          rnode->stcc_.mvVals(lnode->getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
+          rnode.stcc_.mvVals(lnode.getConstPtr_vals(), std::get<0>(changeList[i]), std::get<1>(changeList[i]), std::get<2>(changeList[i]));
         }
-        rnode->stccSize_ += sumWR_increment;
+        rnode.stccSize_ += sumWR_increment;
       }
 
       if (isNewElemInL) {
@@ -2309,31 +2558,31 @@ namespace itmmti
         //   std::cerr << "numSrcWCodesInL = " << numSrcWCodesInL << std::endl;
         // }
         const uint16_t sumWL_ins = static_cast<uint16_t>(StepCodeUtil::sumW(srcWCodes, 0, numChild_ins));
-        const uint16_t tailBitPos_new = lnode->calcBitPos(childIdx) + sumWL_ins;
-        lnode->stccSize_ = tailBitPos_new;
+        const uint16_t tailBitPos_new = lnode.calcBitPos(childIdx) + sumWL_ins;
+        lnode.stccSize_ = tailBitPos_new;
         const uint8_t numTail = numL_new - (childIdx + numChild_ins);
         if (numTail) {
-          const uint16_t tailBitPos_old = lnode->calcBitPos(childIdx + numChild_del);
-          const uint16_t w = lnode->calcBitPos(childIdx + numChild_del + numTail) - tailBitPos_old;
-          lnode->stccSize_ += w;
+          const uint16_t tailBitPos_old = lnode.calcBitPos(childIdx + numChild_del);
+          const uint16_t w = lnode.calcBitPos(childIdx + numChild_del + numTail) - tailBitPos_old;
+          lnode.stccSize_ += w;
           if (tailBitPos_new != tailBitPos_old) {
-            lnode->reserveBitCapacity(lnode->stccSize_);
-            lnode->stcc_.mvVals(lnode->getConstPtr_vals(), tailBitPos_old, tailBitPos_new, w);
+            lnode.reserveBitCapacity(lnode.stccSize_);
+            lnode.stcc_.mvVals(lnode.getConstPtr_vals(), tailBitPos_old, tailBitPos_new, w);
           }
-          lnode->stcc_.mvWCodes(lnode->getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, numTail);
+          lnode.stcc_.mvWCodes(lnode.getConstPtr_wCodes(), childIdx + numChild_del, childIdx + numChild_ins, numTail);
           mvIdxRL(idxM2S_, lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail, idxS2M_);
-          mvSample(lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail);
+          mvSamples(lIdxBase + childIdx + numChild_del, lIdxBase + childIdx + numChild_ins, numTail);
         } else {
-          lnode->reserveBitCapacity(lnode->stccSize_);
+          lnode.reserveBitCapacity(lnode.stccSize_);
         }
-        lnode->stcc_.mvWCodes(srcWCodes, 0, childIdx, numChild_ins);
-        lnode->updateWCodesAuxM(childIdx, numL_new);
+        lnode.stcc_.mvWCodes(srcWCodes, 0, childIdx, numChild_ins);
+        lnode.updateWCodesAuxM(childIdx, numL_new);
       } else { // shrink
-        lnode->stccSize_ = lnode->calcBitPos(numL_new); // shrink (just change bitSize)
-        lnode->shrinkBitCapacity();
-        lnode->updateWCodesAuxM(numL_new - 1, numL_new);
+        lnode.stccSize_ = lnode.calcBitPos(numL_new); // shrink (just change bitSize)
+        lnode.shrinkBitCapacity();
+        lnode.updateWCodesAuxM(numL_new - 1, numL_new);
       }
-      lnode->numChildren_ = numL_new;
+      lnode.numChildren_ = numL_new;
 
       return (isNewElemInL) ? lIdxBase + childIdx : rIdxBase + childIdx - numL_new;
     }
@@ -2350,67 +2599,15 @@ namespace itmmti
       //   std::cerr << __FUNCTION__ << ": lnode = " << lnode << ", rnode = " << rnode
       //             << ", childIdx = " << (int)childIdx << ", numChild_ins = " << (int)numChild_ins << std::endl;
       // }
-      const uint64_t btmM = idxM / kBtmB;
-      const uint8_t childIdx = idxM % kBtmB;
-      auto btmNodeM = btmPtrsM_[btmM];
-      uint64_t bitPos = btmNodeM->calcBitPos(childIdx);
+      const uint64_t btmM = idxM / kBtmBM;
+      const uint8_t childIdx = idxM % kBtmBM;
+      auto & btmNodeM = btmMInfo_.getBtmNodeRef(btmM);
+      uint64_t bitPos = btmNodeM.calcBitPos(childIdx);
       for (uint8_t i = childIdx; i < childIdx + numChild_ins; ++i) {
-        idxM2S_.write(newLinks[i - childIdx], btmM * kBtmB + i);
-        uint8_t w = btmNodeM->stcc_.readW(i);
-        btmNodeM->stcc_.writeWBits(newWeights[i - childIdx], bitPos, w);
+        idxM2S_.write(newLinks[i - childIdx], btmM * kBtmBM + i);
+        uint8_t w = btmNodeM.stcc_.readW(i);
+        btmNodeM.stcc_.writeWBits(newWeights[i - childIdx], bitPos, w);
         bitPos += w;
-      }
-    }
-
-
-    void writeNewElemInTwoBtmM
-    (
-     const uint64_t lIdxBase,
-     const uint64_t rIdxBase,
-     uint8_t childIdx, //!< Relative idx to write counting from left-end of lnode
-     const uint64_t * newWeights, //!< Storing weights to insert to stcc
-     const uint64_t * newLinks, //!< Storing new links to insert
-     const uint8_t numChild_ins
-     ) noexcept {
-      // {//debug
-      //   std::cerr << __FUNCTION__ << ": lnode = " << lnode << ", rnode = " << rnode
-      //             << ", childIdx = " << (int)childIdx << ", numChild_ins = " << (int)numChild_ins << std::endl;
-      // }
-
-      auto lnode = btmPtrsM_[lIdxBase / kBtmB];
-      auto rnode = btmPtrsM_[rIdxBase / kBtmB];
-      uint8_t numL = lnode->getNumChildren();
-      uint8_t numNewElemInL = 0;
-      if (childIdx < numL) { // Insert new elements to lnode
-        uint64_t bitPos = lnode->calcBitPos(childIdx);
-        numNewElemInL = std::min(numChild_ins, static_cast<uint8_t>(numL - childIdx));
-        // {//debug
-        //   std::cerr << "insert to l: (" << lnode << ")" << numNewElemInL << std::endl;
-        //   // lnode->printStatistics(std::cerr, true);
-        // }
-        for (uint8_t i = childIdx; i < childIdx + numNewElemInL; ++i) {
-          idxM2S_.write(newLinks[i - childIdx], lIdxBase + i);
-          uint8_t w = lnode->stcc_.readW(i);
-          lnode->stcc_.writeWBits(newWeights[i - childIdx], bitPos, w);
-          bitPos += w;
-        }
-      }
-      if (numNewElemInL < numChild_ins) { // Insert new elements to rnode
-        // {//debug
-        //   std::cerr << "insert to r:" << std::endl;
-        //   rnode->printStatistics(std::cerr, true);
-        // }
-        childIdx += numNewElemInL - numL;
-        uint64_t bitPos = rnode->calcBitPos(childIdx);
-        for (uint8_t i = childIdx; i < childIdx + numChild_ins - numNewElemInL; ++i) {
-          idxM2S_.write(newLinks[i - childIdx + numNewElemInL], rIdxBase + i);
-          uint8_t w = rnode->stcc_.readW(i);
-          // std::cerr << "ci = " << ci
-          //           << ", w = " << (int)w
-          //           << ", weight = " << weights[ci - childIdx_ins] << std::endl;
-          rnode->stcc_.writeWBits(newWeights[i - childIdx + numNewElemInL], bitPos, w);
-          bitPos += w;
-        }
       }
     }
 
@@ -2422,7 +2619,7 @@ namespace itmmti
      *   - numChild_ins == 1 and numChild_del == 0, or
      *   - numChild_ins == 3 and numChild_del == 1.
      */
-    uint64_t insertNewElemM_simple
+    uint64_t insertNewElemM
     (
      const uint64_t idxBase,
      const uint8_t childIdx,
@@ -2431,15 +2628,15 @@ namespace itmmti
      const uint8_t numChild_ins,
      const uint8_t numChild_del //!< Length of wCodes of tgt to delete
      ) noexcept {
-      assert(numChild_ins <= kBtmB);
-      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(idxBase / kBtmB)); // could be equal. Especialy "childIdx" could be "numChildren"
+      assert(numChild_ins <= kBtmBM);
+      assert(childIdx + numChild_del <= getNumChildrenFromBtmM(idxBase / kBtmBM)); // could be equal. Especialy "childIdx" could be "numChildren"
       // {//debug
-      //   std::cerr << __func__ << " idxBase = " << idxBase << ", childIdx = " << (int)childIdx
+      //   std::cerr << __func__ << ": idxBase = " << idxBase << ", childIdx = " << (int)childIdx
       //             << ", numChild_ins = " << (int)numChild_ins << ", numChild_del = " << (int)numChild_del << std::endl;
       //   // btmPtrs_[insertMorS][idxBase / kBtmB]->printDebugInfo(std::cerr);
       // }
 
-      auto btmNodeM = btmPtrsM_[idxBase / kBtmB];
+      auto & btmNodeM = btmMInfo_.getBtmNodeRef(idxBase / kBtmBM);
       uint64_t wCodesTemp[1];
       uint16_t sumW_ins = 0;
       for (uint8_t i = 0; i < numChild_ins; ++i) {
@@ -2448,47 +2645,46 @@ namespace itmmti
         StepCodeUtil::writeWCode(StepCodeUtil::calcWCodeFromSteppedW(w), wCodesTemp, i);
       }
 
-      const uint8_t num_old = btmNodeM->getNumChildren();
+      const uint8_t num_old = btmNodeM.getNumChildren();
       const uint16_t num = static_cast<uint16_t>(num_old) + numChild_ins - numChild_del;
-      if (num <= static_cast<uint16_t>(kBtmB)) { // Easy case: This node can accommodate inserting elements.
+      if (num <= static_cast<uint16_t>(kBtmBM)) { // Easy case: This node can accommodate inserting elements.
         makeSpaceInOneBtmNodeM(idxBase + childIdx, wCodesTemp, sumW_ins, numChild_ins, numChild_del);
         writeNewElemInOneBtmM(idxBase + childIdx, newVals, newLinks, numChild_ins);
         return idxBase + childIdx;
       }
 
-      const uint8_t excess = static_cast<uint8_t>(num - kBtmB);
-      auto parent = btmNodeM->getParent();
-      const auto idxInSib = btmNodeM->getIdxInSibling();
+      const uint8_t excess = static_cast<uint8_t>(num - kBtmBM);
+      auto parent = btmNodeM.getParent();
+      const auto idxInSib = btmNodeM.getIdxInSibling();
       if (idxInSib) { // Check previous sibling.
         uint64_t lBtmM = reinterpret_cast<uintptr_t>(parent->getChildPtr(idxInSib - 1));
-        auto lBtmNodeM = btmPtrsM_[lBtmM];
-        const auto numL = lBtmNodeM->getNumChildren();
-        if (kBtmB - numL >= excess + 2) { // +2 for simplisity
-          const auto retIdx = overflowToLeftM_simple(lBtmM * kBtmB, idxBase, childIdx, wCodesTemp, numChild_ins, numChild_del);
+        auto & lBtmNodeM = btmMInfo_.getBtmNodeRef(lBtmM);
+        const auto numL = lBtmNodeM.getNumChildren();
+        if (kBtmBM - numL >= excess + 2) { // +2 for simplisity
+          const auto retIdx = overflowToLeftM(lBtmM * kBtmBM, idxBase, childIdx, wCodesTemp, numChild_ins, numChild_del);
           writeNewElemInOneBtmM(retIdx, newVals, newLinks, numChild_ins);
-          parent->changePSumAt(idxInSib - 1, parent->getPSum(idxInSib) + calcSumOfWeightOfBtmM(lBtmM, numL, lBtmNodeM->getNumChildren()));
+          parent->changePSumAt(idxInSib - 1, parent->getPSum(idxInSib) + calcSumOfWeightOfBtmM(lBtmM, numL, lBtmNodeM.getNumChildren()));
           return retIdx;
         }
       }
 
       if (idxInSib + 1 < parent->getNumChildren()) { // Check next sibling.
         uint64_t rBtmM = reinterpret_cast<uintptr_t>(parent->getChildPtr(idxInSib + 1));
-        auto rnode = btmPtrsM_[rBtmM];
-        const auto numR = rnode->getNumChildren();
-        if (kBtmB - numR >= excess + 2) { // +2 for simplisity
-          const auto retIdx = overflowToRightM_simple(idxBase, rBtmM * kBtmB, childIdx, wCodesTemp, numChild_ins, numChild_del);
+        auto & rBtmNodeM = btmMInfo_.getBtmNodeRef(rBtmM);
+        const auto numR = rBtmNodeM.getNumChildren();
+        if (kBtmBM - numR >= excess + 2) { // +2 for simplisity
+          const auto retIdx = overflowToRightM(idxBase, rBtmM * kBtmBM, childIdx, wCodesTemp, numChild_ins, numChild_del);
           writeNewElemInOneBtmM(retIdx, newVals, newLinks, numChild_ins);
-          parent->changePSumAt(idxInSib, parent->getPSum(idxInSib + 1) - calcSumOfWeightOfBtmM(rBtmM, 0, rnode->getNumChildren() - numR));
+          parent->changePSumAt(idxInSib, parent->getPSum(idxInSib + 1) - calcSumOfWeightOfBtmM(rBtmM, 0, rBtmNodeM.getNumChildren() - numR));
           return retIdx;
         }
       }
 
       { // This bottom node has to be split
-        auto rnode = new BtmNodeM();
-        const auto rBtmM = setNewBtmNodeM(rnode);
-        const auto retIdx = overflowToRightM_simple(idxBase, rBtmM * kBtmB, childIdx, wCodesTemp, numChild_ins, numChild_del);
+        const auto rBtmM = setNewBtmNodeM();
+        const auto retIdx = overflowToRightM(idxBase, rBtmM * kBtmBM, childIdx, wCodesTemp, numChild_ins, numChild_del);
         writeNewElemInOneBtmM(retIdx, newVals, newLinks, numChild_ins);
-        handleSplitOfBtmInBtmM(idxBase / kBtmB, rBtmM);
+        handleSplitOfBtmInBtmM(idxBase / kBtmBM, rBtmM);
         return retIdx;
       }
     }
@@ -2502,10 +2698,10 @@ namespace itmmti
       // {//debug
       //   std::cerr << __func__ << " idxM = " << idxM << ", link = " << link << std::endl;
       // }
-      const uint8_t childIdx = (idxM % kBtmB) + 1; // +1 is needed to put new run AFTER "idx". "childIdx" could be "kBtmB"
+      const uint8_t childIdx = (idxM % kBtmBM) + 1; // +1 is needed to put new run AFTER "idx". "childIdx" could be "kBtmBM"
       const uint64_t newVals[] = {1};
       const uint64_t newLinks[] = {link};
-      return insertNewElemM_simple(idxM / kBtmB * kBtmB, childIdx, newVals, newLinks, 1, 0);
+      return insertNewElemM(idxM / kBtmBM * kBtmBM, childIdx, newVals, newLinks, 1, 0);
     }
 
 
@@ -2517,15 +2713,14 @@ namespace itmmti
       // {//debug
       //   std::cerr << __func__ << " idxM = " << idxM << ", splitPos = " << splitPos << std::endl;
       // }
-
-      const uint64_t btmM = idxM / kBtmB;
-      auto btmNodeM = btmPtrsM_[btmM];
-      const uint8_t childIdx = idxM % kBtmB;
+      const uint64_t btmM = idxM / kBtmBM;
+      auto & btmNodeM = btmMInfo_.getBtmNodeRef(btmM);
+      const uint8_t childIdx = idxM % kBtmBM;
       changePSumFromParentM(btmM, 1);
-      const uint64_t weight2 = btmNodeM->readStccVal(childIdx) - splitPos;
+      const uint64_t weight2 = getWeightFromIdxM(idxM) - splitPos;
       const uint64_t newVals[] = {splitPos, 1, weight2};
-      const uint64_t newLinks[] = {idxM2S_.read(btmM * kBtmB + childIdx), 0, 0}; // 0, 0 are dummy
-      return insertNewElemM_simple(idxM / kBtmB * kBtmB, childIdx, newVals, newLinks, 3, 1);
+      const uint64_t newLinks[] = {idxM2S(btmM * kBtmBM + childIdx), 0, 0}; // 0, 0 are dummy
+      return insertNewElemM(idxM / kBtmBM * kBtmBM, childIdx, newVals, newLinks, 3, 1);
     }
 
 
@@ -2538,19 +2733,17 @@ namespace itmmti
       // {//debug
       //   std::cerr << __func__ << " idxS = " << idxS << ", link = " << link << ", ch = " << ch << std::endl;
       // }
-      const uint8_t childIdx = (idxS % kBtmB) + 1; // +1 is needed to put new run AFTER "idx". "childIdx" could be "kBtmB"
-      return insertNewElemS_simple(idxS / kBtmB * kBtmB, childIdx, link, ch);
+      const uint8_t childIdx = (idxS % kBtmBS) + 1; // +1 is needed to put new run AFTER "idx". "childIdx" could be "kBtmB"
+      return insertNewElemS(idxS / kBtmBS * kBtmBS, childIdx, link, ch);
     }
 
 
     /*!
      * @brief Insert stcc values
      * @note Weights of BTreeNodes should be changed in advance
-     * @node For simplicity, assume the following two cases (which are necessary for online construction):
-     *   - numChild_ins == 1 and numChild_del == 0, or
-     *   - numChild_ins == 3 and numChild_del == 1.
+     * @node For simplicity, assume that just a single run is inserted (which are necessary for online construction):
      */
-    uint64_t insertNewElemS_simple
+    uint64_t insertNewElemS
     (
      const uint64_t idxBase,
      const uint8_t childIdx,
@@ -2562,13 +2755,13 @@ namespace itmmti
       //             << ", newLink = " << newLink << ", ch = " << ch << std::endl;
       //   // btmPtrs_[insertMorS][idxBase / kBtmB]->printDebugInfo(std::cerr);
       // }
-      assert(childIdx <= getNumChildrenFromBtmS(idxBase / kBtmB)); // could be equal
+      assert(childIdx <= getNumChildrenFromBtmS(idxBase / kBtmBS)); // could be equal
 
       const uint64_t idxS = idxBase + childIdx;
-      const uint64_t btmS = idxBase / kBtmB;
+      const uint64_t btmS = idxBase / kBtmBS;
       const uint8_t num_old = getNumChildrenFromBtmS(btmS);
-      if (num_old + 1 <= kBtmB) { // Easy case: This node can accommodate inserting elements.
-        numChildrenS_[btmS] = num_old + 1;
+      if (num_old + 1 <= kBtmBS) { // Easy case: This node can accommodate inserting elements.
+        btmSInfo_.setNumChildren(btmS, num_old + 1);
         mvIdxRL(idxS2M_, idxS, idxS + 1, num_old - childIdx, idxM2S_);
         idxS2M_.write(newLink, idxS);
         return idxS;
@@ -2577,10 +2770,10 @@ namespace itmmti
       auto parent = getParentFromBtmS(btmS);
       const auto idxInSib = getIdxInSiblingFromBtmS(btmS);
       if (idxInSib) { // Check previous sibling.
-        auto lBtmS = reinterpret_cast<uint64_t>(parent->getChildPtr(idxInSib - 1));
+        auto lBtmS = reinterpret_cast<uintptr_t>(parent->getChildPtr(idxInSib - 1));
         const auto numL = getNumChildrenFromBtmS(lBtmS);
-        if (numL < kBtmB - 1) { // -1 for simplisity
-          const auto retIdx = overflowToLeftS_simple(lBtmS * kBtmB, idxBase, childIdx);
+        if (numL < kBtmBS - 1) { // -1 for simplisity
+          const auto retIdx = overflowToLeftS(lBtmS * kBtmBS, idxBase, childIdx);
           idxS2M_.write(newLink, retIdx);
           parent->changePSumAt(idxInSib - 1, parent->getPSum(idxInSib) + calcSumOfWeightOfBtmS(lBtmS, numL, getNumChildrenFromBtmS(lBtmS)));
           return retIdx;
@@ -2588,10 +2781,10 @@ namespace itmmti
       }
 
       if (idxInSib + 1 < parent->getNumChildren()) { // Check next sibling.
-        auto rBtmS = reinterpret_cast<uint64_t>(parent->getChildPtr(idxInSib + 1));
+        auto rBtmS = reinterpret_cast<uintptr_t>(parent->getChildPtr(idxInSib + 1));
         const auto numR = getNumChildrenFromBtmS(rBtmS);
-        if (numR < kBtmB - 1) { // -1 for simplisity
-          const auto retIdx = overflowToRightS_simple(idxBase, rBtmS * kBtmB, childIdx);
+        if (numR < kBtmBS - 1) { // -1 for simplisity
+          const auto retIdx = overflowToRightS(idxBase, rBtmS * kBtmBS, childIdx);
           idxS2M_.write(newLink, retIdx);
           parent->changePSumAt(idxInSib, parent->getPSum(idxInSib + 1) - calcSumOfWeightOfBtmS(rBtmS, 0, getNumChildrenFromBtmS(rBtmS) - numR));
           return retIdx;
@@ -2600,15 +2793,15 @@ namespace itmmti
 
       { // This bottom node has to be split
         const auto rBtmS = setNewBtmNodeS(ch);
-        const auto retIdx = overflowToRightS_simple(idxBase, rBtmS * kBtmB, childIdx);
+        const auto retIdx = overflowToRightS(idxBase, rBtmS * kBtmBS, childIdx);
         idxS2M_.write(newLink, retIdx);
-        handleSplitOfBtmInBtmS(idxBase / kBtmB, rBtmS);
+        handleSplitOfBtmInBtmS(btmS, rBtmS);
         return retIdx;
       }
     }
 
 
-    uint64_t overflowToLeftS_simple
+    uint64_t overflowToLeftS
     (
      const uint64_t lIdxBase,
      const uint64_t rIdxBase,
@@ -2618,11 +2811,11 @@ namespace itmmti
       //   std::cerr << __func__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = " << (int)childIdx << std::endl;
       //   // btmPtrs_[insertMorS][idxBase / kBtmB]->printDebugInfo(std::cerr);
       // }
-      const uint8_t numL = getNumChildrenFromBtmS(lIdxBase / kBtmB);
-      const uint8_t numToLeft = numL / 2 + kBtmB / 2 - numL;
+      const uint8_t numL = getNumChildrenFromBtmS(lIdxBase / kBtmBS);
+      const uint8_t numToLeft = numL / 2 + kBtmBS / 2 - numL;
       const bool isNewElemInL = (childIdx < numToLeft);
       const uint8_t numL_new = numL + numToLeft + isNewElemInL;
-      const uint8_t numR_new = kBtmB - numToLeft + !isNewElemInL;
+      const uint8_t numR_new = kBtmBS - numToLeft + !isNewElemInL;
       { // update left node (possibly first part)
         const uint8_t num = (isNewElemInL) ? childIdx : numToLeft;
         if (num) {
@@ -2637,25 +2830,25 @@ namespace itmmti
       }
 
       { // update this node (possibly first part)
-        const uint8_t num = (isNewElemInL) ? kBtmB - numToLeft : childIdx - numToLeft;
+        const uint8_t num = (isNewElemInL) ? kBtmBS - numToLeft : childIdx - numToLeft;
         if (num) {
           mvIdxLR(idxS2M_, rIdxBase + numToLeft, rIdxBase, num, idxM2S_);
         }
       }
       if (!isNewElemInL) { // update this node (second part)
-        const uint8_t num = kBtmB - childIdx;
-        if (num && kBtmB != numR_new) {
-          mvIdxLR(idxS2M_, rIdxBase + kBtmB - num, rIdxBase + numR_new - num, num, idxM2S_);
+        const uint8_t num = kBtmBS - childIdx;
+        if (num && kBtmBS != numR_new) {
+          mvIdxLR(idxS2M_, rIdxBase + kBtmBS - num, rIdxBase + numR_new - num, num, idxM2S_);
         }
       }
 
-      numChildrenS_[lIdxBase / kBtmB] = numL_new;
-      numChildrenS_[rIdxBase / kBtmB] = numR_new;
+      btmSInfo_.setNumChildren(lIdxBase / kBtmBS, numL_new);
+      btmSInfo_.setNumChildren(rIdxBase / kBtmBS, numR_new);
       return (isNewElemInL) ? lIdxBase + numL + childIdx : rIdxBase + childIdx - numToLeft;
     }
 
 
-    uint64_t overflowToRightS_simple
+    uint64_t overflowToRightS
     (
      const uint64_t lIdxBase,
      const uint64_t rIdxBase,
@@ -2663,19 +2856,19 @@ namespace itmmti
      ) noexcept {
       // {//debug
       //   std::cerr << __func__ << ": lIdxBase = " << lIdxBase << ", rIdxBase = " << rIdxBase << ", childIdx = " << (int)childIdx << std::endl;
-      //   // btmPtrs_[insertMorS][idxBase / kBtmB]->printDebugInfo(std::cerr);
+      //   // btmPtrs_[insertMorS][idxBase / kBtmBS]->printDebugInfo(std::cerr);
       // }
-      assert(childIdx <= kBtmB);
+      assert(childIdx <= kBtmBS);
 
-      const uint8_t numR = getNumChildrenFromBtmS(rIdxBase / kBtmB);
-      const uint8_t leftEnd = numR / 2 + kBtmB /2;
+      const uint8_t numR = getNumChildrenFromBtmS(rIdxBase / kBtmBS);
+      const uint8_t leftEnd = numR / 2 + kBtmBS /2;
       const bool isNewElemInL = (childIdx < leftEnd);
-      const uint8_t shift = kBtmB - leftEnd + !isNewElemInL;
+      const uint8_t shift = kBtmBS - leftEnd + !isNewElemInL;
       mvIdxRL(idxS2M_, rIdxBase, rIdxBase + shift, numR, idxM2S_);
       const uint8_t numR_new = numR + shift;
 
       if (isNewElemInL) {
-        mvIdxRL(idxS2M_, lIdxBase + leftEnd, rIdxBase, kBtmB - leftEnd, idxM2S_);
+        mvIdxRL(idxS2M_, lIdxBase + leftEnd, rIdxBase, kBtmBS - leftEnd, idxM2S_);
         const uint8_t num = leftEnd - childIdx;
         if (num) {
           mvIdxRL(idxS2M_, lIdxBase + childIdx, lIdxBase + childIdx + 1, num, idxM2S_);
@@ -2688,15 +2881,15 @@ namespace itmmti
           }
         }
         {
-          const uint8_t num = kBtmB - childIdx;
+          const uint8_t num = kBtmBS - childIdx;
           if (num) {
             mvIdxLR(idxS2M_, lIdxBase + childIdx, rIdxBase + shift - num, num, idxM2S_);
           }
         }
       }
 
-      numChildrenS_[lIdxBase / kBtmB] = leftEnd + isNewElemInL;
-      numChildrenS_[rIdxBase / kBtmB] = numR_new;
+      btmSInfo_.setNumChildren(lIdxBase / kBtmBS, leftEnd + isNewElemInL);
+      btmSInfo_.setNumChildren(rIdxBase / kBtmBS, numR_new);
       return (isNewElemInL) ? lIdxBase + childIdx : rIdxBase + childIdx - leftEnd;
     }        
 
@@ -2713,15 +2906,15 @@ namespace itmmti
       //   std::cerr << __func__ << ": idxM = " << idxM << ", change = " << change << std::endl;
       // }
       // update btm node
-      auto btmNodeM = btmPtrsM_[idxM / kBtmB];
-      const uint64_t curWeight = btmNodeM->readStccVal(idxM % kBtmB);
+      auto & btmNodeM = btmMInfo_.getBtmNodeRef(idxM / kBtmBM);
+      const uint64_t curWeight = btmNodeM.readStccVal(idxM % kBtmBM);
       assert(curWeight + change > 0);
       const uint64_t newVals[] = {static_cast<uint64_t>(curWeight + change)};
-      btmNodeM->replace(newVals, 1, idxM % kBtmB);
+      btmNodeM.replace(newVals, 1, idxM % kBtmBM);
       // update mixed tree
-      changePSumFromParentM(idxM / kBtmB, change);
+      changePSumFromParentM(idxM / kBtmBM, change);
       // update separated tree AND alphabet tree (they are connected seamlessly)
-      changePSumFromParentS(idxM2S(idxM) / kBtmB, change);
+      changePSumFromParentS(idxM2S(idxM) / kBtmBS, change);
     }
 
 
@@ -2737,7 +2930,7 @@ namespace itmmti
      const uint64_t ch
      ) noexcept {
       // {//debug
-      //   std::cerr << __FUNCTION__ << " idxM = " << idxM << ", splitPos = " << splitPos
+      //   std::cerr << __func__ << " idxM = " << idxM << ", splitPos = " << splitPos
       //             << ", weight = " << weight << ", leafVal1 = " << leafVal1 << ", leafVal2 = " << leafVal2 << std::endl;
       // }
 
@@ -2751,12 +2944,12 @@ namespace itmmti
       if (retRootS->isDummy() || getCharFromNodeS(retRootS) != ch) {
         idxS = setupNewSTree(retRootS, ch);
       } else {
-        idxS = getPredIdxSFromIdxM(retRootS, ch, tempIdxM);
+        idxS = calcPredIdxSFromIdxM(retRootS, ch, tempIdxM);
       }
       const auto newIdxM = getNextIdxM(tempIdxM);
       { // insert new run with character "ch"
         tempIdxM = newIdxM;
-        changePSumFromParentS(idxS / kBtmB, 1);
+        changePSumFromParentS(idxS / kBtmBS, 1);
         idxS = insertRunAfterS(idxS, tempIdxM, ch);
         idxM2S_.write(idxS, tempIdxM);
       }
@@ -2784,20 +2977,20 @@ namespace itmmti
       //   // btmPtrs_[kM][idxM / kBtmB]->printDebugInfo(std::cerr);
       // }
 
-      changePSumFromParentM(idxM / kBtmB, 1);
+      changePSumFromParentM(idxM / kBtmBM, 1);
       const auto newIdxM = insertRunAfterM(idxM, 0);
       BTreeNodeT * retRootS = searchCharA(ch);
       uint64_t idxS;
       if (retRootS->isDummy() || getCharFromNodeS(retRootS) != ch) {
         idxS = setupNewSTree(retRootS, ch);
       } else {
-        idxS = getPredIdxSFromIdxM(retRootS, ch, newIdxM);
+        idxS = calcPredIdxSFromIdxM(retRootS, ch, newIdxM);
       }
       // {//debug
       //   std::cerr << __FUNCTION__ << ": BEFORE idxS = " << idxS << std::endl;
       //   printDebugInfoOfBtmS(idxS / kBtmB, std::cerr);
       // }
-      changePSumFromParentS(idxS / kBtmB, 1);
+      changePSumFromParentS(idxS / kBtmBS, 1);
       const auto newIdxS = insertRunAfterS(idxS, newIdxM, ch);
       idxM2S_.write(newIdxS, newIdxM);
       // parent->changePSumAt(idxInSib - 1, parent->getPSum(idxInSib) + calcSumOfWeightOfBtmNode(lnode, numL, lnode->getNumChildren(), insertMorS));
@@ -2838,7 +3031,7 @@ namespace itmmti
       assert(isValidIdxM(idxM));
       assert(sampleUb_);
 
-      sample_.write(newSample, idxM);
+      samples_.write(newSample, idxM);
     }
 
 
@@ -2855,13 +3048,13 @@ namespace itmmti
       // }
 
       const auto btmM = reinterpret_cast<uint64_t>(srootM_.root_->getRmBtm());
-      const auto idxM = btmM * kBtmB + getNumChildrenFromBtmM(btmM) - 1;
+      const auto idxM = btmM * kBtmBM + getNumChildrenFromBtmM(btmM) - 1;
       const auto idxS = idxM2S(idxM);
       if (idxS == 0) { // dummy
         pos = 0;
         return insertRunAfter(0, ch);
       }
-      if (getCharFromBtmS(idxS / kBtmB) != ch) {
+      if (getCharFromBtmS(idxS / kBtmBS) != ch) {
         pos = 0;
         return insertRunAfter(idxM, ch);
       } else { // merge into the last run
@@ -2882,7 +3075,7 @@ namespace itmmti
     //  const uint64_t leafVal
     //  ) {
     //   const auto btmNodeM = reinterpret_cast<BtmNode *>(srootM_.root_->getRmBtm());
-    //   return insertRunAfter(calcIdxBase(btmNodeM, btmPtrs_[kS]) + btmNodeM->getNumChildrenFromBtmM() - 1, weight, leafVal, ch);
+    //   return insertRunAfter(calcIdxBase(btmNodeM, btmPtrs_[kS]) + btmNodeM.getNumChildrenFromBtmM() - 1, weight, leafVal, ch);
     // }
 
 
@@ -2981,15 +3174,13 @@ namespace itmmti
 
     /*!
      * @brief Return memory for bottom part of MTree
-     * @note idxM2S_ and sample_ are excluded
+     * @note idxM2S_ and samples_ are excluded
      */
-    size_t calcMemBytesBtmM() const noexcept {
-      size_t size = (idxM2S_.capacity() / kBtmB) * sizeof(btmPtrsM_[0]);
-      const uint64_t numUsed = idxM2S_.size() / kBtmB;
-      for (uint64_t i = 0; i < numUsed; ++i) {
-        size += btmPtrsM_[i]->calcMemBytes();
-      }
-      return size;
+    size_t calcMemBytesBtmM
+    (
+     bool includeThis = true
+     ) const noexcept {
+      return btmMInfo_.calcMemBytes(includeThis);
     }
 
 
@@ -2999,12 +3190,7 @@ namespace itmmti
      * @node Unused (over reserved) part is not counted
      */
     size_t calcMemBytesBtmM_used() const noexcept {
-      const uint64_t numUsed = idxM2S_.size() / kBtmB;
-      size_t size = numUsed * sizeof(btmPtrsM_[0]);
-      for (uint64_t i = 0; i < numUsed; ++i) {
-        size += btmPtrsM_[i]->calcMemBytes();
-      }
-      return size;
+      return btmMInfo_.calcMemBytes_used();
     }
 
 
@@ -3012,11 +3198,11 @@ namespace itmmti
      * @brief Return memory for bottom part of STree
      * @note idxS2M_ and sample_ are excluded
      */
-    size_t calcMemBytesBtmS() const noexcept {
-      return (idxS2M_.capacity() / kBtmB) * (sizeof(parentS_[0]) +
-                                             sizeof(charS_[0]) +
-                                             sizeof(idxInSiblingS_[0]) +
-                                             sizeof(numChildrenS_[0]));
+    size_t calcMemBytesBtmS
+    (
+     bool includeThis = true
+     ) const noexcept {
+      return btmSInfo_.calcMemBytes(includeThis);
     }
 
 
@@ -3026,15 +3212,15 @@ namespace itmmti
      * @node Unused (over reserved) part is not counted
      */
     size_t calcMemBytesBtmS_used() const noexcept {
-      return (idxS2M_.size() / kBtmB) * (sizeof(parentS_[0]) +
-                                         sizeof(charS_[0]) +
-                                         sizeof(idxInSiblingS_[0]) +
-                                         sizeof(numChildrenS_[0]));
+      return btmSInfo_.calcMemBytes_used();
     }
 
 
-    size_t calcMemBytesLinks() const noexcept {
-      return idxM2S_.calcMemBytes() + idxS2M_.calcMemBytes();
+    size_t calcMemBytesLinks
+    (
+     bool includeThis = true
+     ) const noexcept {
+      return idxM2S_.calcMemBytes(includeThis) + idxS2M_.calcMemBytes(includeThis);
     }
 
 
@@ -3043,23 +3229,21 @@ namespace itmmti
     }
 
 
-    size_t calcMemBytesSample() const noexcept {
-      return sample_.calcMemBytes();
+    size_t calcMemBytesSamples
+    (
+     bool includeThis = true
+     ) const noexcept {
+      return samples_.calcMemBytes(includeThis);
     }
 
 
-    size_t calcMemBytesSample_used() const noexcept {
-      return (sample_.getW() * sample_.size()) / 8;
+    size_t calcMemBytesSamples_used() const noexcept {
+      return (samples_.getW() * samples_.size()) / 8;
     }
 
 
     size_t calcMemBytesBtmWeights() const noexcept {
-      size_t size = 0;
-      const uint64_t numUsed = idxM2S_.size() / kBtmB;
-      for (uint64_t i = 0; i < numUsed; ++i) {
-        size += btmPtrsM_[i]->calcMemBytesStccDynArray();
-      }
-      return size;
+      return btmMInfo_.calcMemBytes_Weights();
     }
 
 
@@ -3067,7 +3251,7 @@ namespace itmmti
       size_t size = calcMemBytesBtmM() - calcMemBytesBtmM_used();
       size += calcMemBytesBtmS() - calcMemBytesBtmS_used();
       size += calcMemBytesLinks() - calcMemBytesLinks_used();
-      size += calcMemBytesSample() - calcMemBytesSample_used();
+      size += calcMemBytesSamples() - calcMemBytesSamples_used();
       return size;
     }
 
@@ -3077,13 +3261,13 @@ namespace itmmti
      bool includeThis = true
      ) const noexcept {
       size_t size = sizeof(*this) * includeThis;
-      size += calcMemBytesBtmM();
-      size += calcMemBytesBtmS();
+      size += calcMemBytesBtmM(false);
+      size += calcMemBytesBtmS(false);
       size += calcMemBytesMTree();
       size += calcMemBytesATree();
       size += calcMemBytesSTree();
-      size += calcMemBytesLinks();
-      size += calcMemBytesSample();
+      size += calcMemBytesLinks(false);
+      size += calcMemBytesSamples(false);
       return size;
     }
 
@@ -3112,7 +3296,7 @@ namespace itmmti
 
     size_t calcNumUsedBtmM() const noexcept {
       size_t numUsed = 0;
-      for (uint64_t i = 0; i < idxM2S_.size() / kBtmB; ++i) {
+      for (uint64_t i = 0; i < getNumBtmM(); ++i) {
         numUsed += getNumChildrenFromBtmM(i);
       }
       return numUsed;
@@ -3120,13 +3304,13 @@ namespace itmmti
 
 
     size_t calcNumSlotsBtmM() const noexcept {
-      return idxM2S_.size();
+      return btmMInfo_.getNumBtm() * kBtmBM;
     }
 
 
     size_t calcNumUsedBtmS() const noexcept {
       size_t numUsed = 0;
-      for (uint64_t i = 0; i < idxS2M_.size() / kBtmB; ++i) {
+      for (uint64_t i = 0; i < getNumBtmS(); ++i) {
         numUsed += getNumChildrenFromBtmS(i);
       }
       return numUsed;
@@ -3134,16 +3318,12 @@ namespace itmmti
 
 
     size_t calcNumSlotsBtmS() const noexcept {
-      return idxS2M_.size();
+      return getNumBtmS() * kBtmBS;
     }
 
 
     size_t calcNumRuns() const noexcept {
-      size_t numRuns = 0;
-      for (size_t i = 0; i < idxM2S_.size() / kBtmB; ++i) {
-        numRuns += getNumChildrenFromBtmM(i);
-      }
-      return numRuns - 1; // -1 due to the first dummy
+      return calcNumUsedBtmM() - 1; // -1 due to the first dummy
     }
 
 
@@ -3168,27 +3348,58 @@ namespace itmmti
         const size_t numUsedA = srootA_.root_->calcNumUsed();
         const size_t numSlotsS = calcNumSlotsSTree();
         const size_t numUsedS = calcNumUsedSTree();
-        const size_t numSlotsBtm = calcNumSlotsBtmM() + calcNumSlotsBtmS();
-        const size_t numUsedBtm = calcNumUsedBtmM() + calcNumUsedBtmS();
+        const size_t numSlotsBtmM = calcNumSlotsBtmM();
+        const size_t numUsedBtmM = calcNumUsedBtmM();
+        const size_t numSlotsBtmS = calcNumSlotsBtmS();
+        const size_t numUsedBtmS = calcNumUsedBtmS();
+        const size_t bytesBtmM = calcMemBytesBtmM();
+        const size_t bytesBtmS = calcMemBytesBtmS();
+        const size_t bytesLinks = calcMemBytesLinks();
+        const size_t bytesSamples = calcMemBytesSamples();
+        const size_t bytesWeights = calcMemBytesBtmWeights();
+        const size_t bytesOverReserved = calcMemBytesOverReserved();
         const size_t totalBytes = calcMemBytes();
-        os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph()
-           << ", BTreeNode arity kB = " << static_cast<uint64_t>(kB) << " BtmNode arity kBtmB = " << static_cast<uint64_t>(kBtmB) << std::endl;
-        os << "MTree bottom array size = " << idxM2S_.size() / kBtmB << ", capacity = " << idxM2S_.capacity() / kBtmB << std::endl;
-        os << "STree bottom array size = " << idxS2M_.size() / kBtmB << ", capacity = " << idxS2M_.capacity() / kBtmB << std::endl;
-        os << "Total: " << totalBytes << " bytes = " << totalBytes / 1024 << " KiB = " << (totalBytes / 1024) / 1024 << " MiB" << std::endl;
+        os << "TotalLen = " << totalLen << ", #Runs = " << numRuns << ", Alphabet Size = " << calcNumAlph() << std::endl;
+        os << "BTreeNode arity kB = " << static_cast<uint64_t>(kB)
+           << ", BtmNode arity kBtmBM = " << static_cast<uint64_t>(kBtmBM)
+           << ", BtmNode arity kBtmBS = " << static_cast<uint64_t>(kBtmBS) << std::endl;
+        os << "MTree bottom array size = " << getNumBtmM() << ", capacity = " << btmMInfo_.capacity() << std::endl;
+        os << "STree bottom array size = " << getNumBtmS() << ", capacity = " << btmSInfo_.capacity() << std::endl;
+        os << "Total: " << totalBytes << " bytes = " << (double)(totalBytes) / 1024 << " KiB = " << ((double)(totalBytes) / 1024) / 1024 << " MiB" << std::endl;
         os << "MTree: " << calcMemBytesMTree() << " bytes, OccuRate = " << ((numSlotsM) ? 100.0 * numUsedM / numSlotsM : 0)
            << " (= 100*" << numUsedM << "/" << numSlotsM << ")" << std::endl;
         os << "ATree: " << calcMemBytesATree() << " bytes, OccuRate = " << ((numSlotsA) ? 100.0 * numUsedA / numSlotsA : 0)
            << " (= 100*" << numUsedA << "/" << numSlotsA << ")" << std::endl;
         os << "STree: " << calcMemBytesSTree() << " bytes, OccuRate = " << ((numSlotsS) ? 100.0 * numUsedS / numSlotsS : 0)
            << " (= 100*" << numUsedS << "/" << numSlotsS << ")" << std::endl;
-        os << "BtmNodes: " << calcMemBytesBtmM() + calcMemBytesBtmS() << " bytes, OccuRate = " << ((numSlotsBtm) ? 100.0 * numUsedBtm / numSlotsBtm : 0)
-           << " (= 100*" << numUsedBtm << "/" << numSlotsBtm << ")" << std::endl;
-        os << "Links: " << calcMemBytesLinks() << " bytes" << std::endl;
-        os << "Samples: " << calcMemBytesSample() << " bytes" << std::endl;
+        os << "BtmNodeM: " << bytesBtmM << " bytes = "
+           << bytesBtmM / 1024.0 << " KiB = "
+           << bytesBtmM / 1024.0 / 1024.0 << " MiB, OccuRate = "
+           << ((numSlotsBtmM) ? 100.0 * numUsedBtmM / numSlotsBtmM : 0)
+           << " (= 100*" << numUsedBtmM << "/" << numSlotsBtmM << ")" << std::endl;
+        os << "BtmNodeS: " << bytesBtmS << " bytes = "
+           << bytesBtmS / 1024.0 << " KiB = "
+           << bytesBtmS / 1024.0 / 1024.0 << " MiB, OccuRate = "
+           << ((numSlotsBtmS) ? 100.0 * numUsedBtmS / numSlotsBtmS : 0)
+           << " (= 100*" << numUsedBtmS << "/" << numSlotsBtmS << ")" << std::endl;
+        os << "BtmNode: " << bytesBtmM + bytesBtmS << " bytes = "
+           << (bytesBtmM + bytesBtmS) / 1024.0 << " KiB = "
+           << (bytesBtmM + bytesBtmS) / 1024.0 / 1024.0 << " MiB, OccuRate = "
+           << ((numSlotsBtmM + numSlotsBtmS) ? 100.0 * (numUsedBtmM + numUsedBtmS) / (numSlotsBtmM + numSlotsBtmS) : 0)
+           << " (= 100*" << (numUsedBtmM + numUsedBtmS) << "/" << (numSlotsBtmM + numSlotsBtmS) << ")" << std::endl;
+        os << "Links: " << bytesLinks << " bytes = "
+           << bytesLinks / 1024.0 << " KiB = "
+           << bytesLinks / 1024.0 / 1024.0 << " MiB" << std::endl;
+        os << "Samples: " << bytesSamples << " bytes = "
+           << bytesSamples / 1024.0 << " KiB = "
+           << bytesSamples / 1024.0 / 1024.0 << " MiB" << std::endl;
         os << "---------------- additional details ----------------" << std::endl;
-        os << "Dynamic array for weights: " << calcMemBytesBtmWeights() << " bytes" << std::endl;
-        os << "Over reserved: " << calcMemBytesOverReserved() << " bytes" << std::endl;
+        os << "Memory for weights: " << bytesWeights << " bytes = "
+           << bytesWeights / 1024.0 << " KiB = "
+           << bytesWeights / 1024.0 / 1024.0 << " MiB" << std::endl;
+        os << "Over reserved: " << bytesOverReserved << " bytes = "
+           << bytesOverReserved / 1024.0 << " KiB = "
+           << bytesOverReserved / 1024.0 / 1024.0 << " MiB" << std::endl;
       }
     }
 
@@ -3207,7 +3418,7 @@ namespace itmmti
          << std::endl;
       os << "idxS2M:";
       for (uint8_t i = 0; i < getNumChildrenFromBtmS(btmS); ++i) {
-        const uint64_t idxS = btmS * kBtmB + i;
+        const uint64_t idxS = btmS * kBtmBS + i;
         os << " [" << idxS << "]" << idxS2M_.read(idxS);
       }
       os << std::endl;
@@ -3220,10 +3431,10 @@ namespace itmmti
      std::ostream & os
      ) const noexcept {
       os << __func__ << ": btmM = " << btmM << std::endl;
-      btmPtrsM_[btmM]->printDebugInfo(os, true);
+      btmMInfo_.getBtmNodeRef(btmM).printDebugInfo(os, true);
       os << "idxM2S:";
       for (uint8_t i = 0; i < getNumChildrenFromBtmM(btmM); ++i) {
-        const uint64_t idxM = btmM * kBtmB + i;
+        const uint64_t idxM = btmM * kBtmBM + i;
         os << " [" << idxM << "]" << idxM2S_.read(idxM);
       }
       os << std::endl;
@@ -3234,20 +3445,12 @@ namespace itmmti
     (
      std::ostream & os
      ) const noexcept {
-      const uint64_t btmSizeM = idxM2S_.size() / kBtmB;
-      const uint64_t btmSizeS = idxS2M_.size() / kBtmB;
-      os << "btmSizeM = " << btmSizeM << ", btmCapacityM = " << idxM2S_.capacity() / kBtmB
-         << ", btmSizeS = " << btmSizeS << ", btmCapacityS = " << idxS2M_.capacity() / kBtmB
+      const uint64_t btmSizeM = getNumBtmM();
+      const uint64_t btmSizeS = getNumBtmS();
+      os << "btmSizeM = " << btmSizeM << ", btmCapacityM = " << idxM2S_.capacity() / kBtmBM
+         << ", btmSizeS = " << btmSizeS << ", btmCapacityS = " << idxS2M_.capacity() / kBtmBS
          << ", traCode_ = " << (int)traCode_ << std::endl;
       if (isReady() && getSumOfWeight() > 0) {
-        {
-          os << "dump btmPtrsM_" << std::endl;
-          for (uint64_t i = 0; i < btmSizeM; ++i) {
-            os << "[" << i << "]" << btmPtrsM_[i] << " ";
-          }
-          os << std::endl;
-        }
-
         // {
         //   os << "dump btmPtrs_[kM] debugInfo" << std::endl;
         //   for (uint64_t i = 0; i < size_[kM]; ++i) {
@@ -3262,12 +3465,12 @@ namespace itmmti
         { // check links of idxM2S and idxS2M
           for (uint64_t i = 0; i < btmSizeM; ++i) {
             for (uint64_t j = 0; j < getNumChildrenFromBtmM(i); ++j) {
-              uint64_t idxM = kBtmB * i + j;
+              uint64_t idxM = kBtmBM * i + j;
               if (idxM != idxS2M(idxM2S(idxM))) {
                 os << "error!! links of idxM2S and idxS2M: idxM = " << idxM
                    << ", idxS = " << idxM2S(idxM) << std::endl; // WARNING, links are not maintained correctly
-                printDebugInfoOfBtmM(idxM / kBtmB, std::cerr);
-                printDebugInfoOfBtmS(idxM2S(idxM) / kBtmB, std::cerr);
+                printDebugInfoOfBtmM(idxM / kBtmBM, std::cerr);
+                printDebugInfoOfBtmS(idxM2S(idxM) / kBtmBS, std::cerr);
               }
             }
           }
@@ -3363,7 +3566,7 @@ namespace itmmti
           for (uint64_t btmM = reinterpret_cast<uintptr_t>(srootM_.root_->getLmBtm_DirectJump());
                btmM != BTreeNodeT::NOTFOUND;
                btmM = getNextBtmM(btmM)) {
-            os << "[" << btmM * kBtmB << "~" << (btmM+1) * kBtmB - 1<< "]";
+            os << "[" << btmM * kBtmBM << "~" << (btmM+1) * kBtmBM - 1<< "]";
             printDebugInfoOfBtmM(btmM, std::cerr);
           }
           os << std::endl;
@@ -3388,7 +3591,7 @@ namespace itmmti
             for (uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm_DirectJump());
                  btmS != BTreeNodeT::NOTFOUND;
                  btmS = getNextBtmS(btmS)) {
-              os << "[" << btmS * kBtmB << "~" << (btmS+1) * kBtmB - 1 << "]";
+              os << "[" << btmS * kBtmBS << "~" << (btmS+1) * kBtmBS - 1 << "]";
               printDebugInfoOfBtmS(btmS, std::cerr);
             }
           }
