@@ -40,9 +40,9 @@ include_directories(${MYMOD_SOURCE_DIR}/BTree)
 
 
 #### Executable
-# add_executable(${PROJECT_NAME} OnlineRLBWT.cpp)
-# target_link_libraries(${PROJECT_NAME} Basics)
-# target_link_libraries(${PROJECT_NAME} BTree)
+add_executable(OnlineRlbwt OnlineRLBWT.cpp)
+target_link_libraries(OnlineRlbwt Basics)
+target_link_libraries(OnlineRlbwt BTree)
 
 add_executable(OnlineLz77ViaRlbwt OnlineLz77ViaRlbwt.cpp)
 target_link_libraries(OnlineLz77ViaRlbwt Basics)
