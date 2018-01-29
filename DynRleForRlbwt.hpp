@@ -24,7 +24,7 @@
 
 // include from Basics
 #include "BitsUtil.hpp"
-#include "WbitsBlockVec.hpp"
+#include "WBitsBlockVec.hpp"
 #include "StepCode.hpp"
 #include "MemUtil.hpp"
 
