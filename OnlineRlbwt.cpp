@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
       }
     }
 
-    rlbwt.extend(uint8_t(c));
+    rlbwt.extend(uint8_t(uc));
     ++j;
   }
 
