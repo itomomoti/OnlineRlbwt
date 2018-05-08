@@ -157,7 +157,7 @@ namespace itmmti
      const uint64_t key, //!< Key
      const uint64_t val //!< Value
      ) noexcept {
-      std::cerr << __func__ << "(" << this << "): key = " << key << ", val = " << val << std::endl;
+      // std::cerr << __func__ << "(" << this << "): key = " << key << ", val = " << val << std::endl;
 
       uint64_t q = key;
       BTreeNodeT * parent;
@@ -186,7 +186,7 @@ namespace itmmti
     (
      const uint64_t key //!< Key
      ) noexcept {
-      std::cerr << __func__ << "(" << this << "): key = " << key << std::endl;
+      // std::cerr << __func__ << "(" << this << "): key = " << key << std::endl;
 
       uint64_t q = key;
       BTreeNodeT * parent;
@@ -197,18 +197,15 @@ namespace itmmti
       uint16_t childIdx = btm->searchPos(q, retWeight, retVal, bitPos); // q is modified
       assert(q + 1 == retWeight); // Assume that key exists.
       if (childIdx + 1 < btm->getNumChildren()) {
-        std::cerr << __func__ << ":1 childIdx = " << (int)childIdx << ", retWeight = " << retWeight << std::endl;
         const uint16_t i = 2 * (childIdx + 1);
         const uint64_t weights[] = {retWeight + btm->readNext(i, bitPos)};
         const uint64_t vals[] = {btm->readNext(i + 1, bitPos)};
         btm->insert_shrink(weights, vals, 1, childIdx, 2, parent, idxInSib);
       } else {
-        std::cerr << __func__ << ":2 childIdx = " << (int)childIdx << ", retWeight = " << retWeight << std::endl;
         uint64_t weights[] = {retWeight};
         btm->insert_shrink(weights, weights, 0, childIdx, 1, parent, idxInSib); // Nothing is inserted, weights is used as dummy array.
-        // search again to get element that is next to deleted element.
+        //// search again to get element that is next to deleted element.
         q = key - retWeight + 1;
-        std::cerr << __func__ << "(" << this << "):2 q = " << q << std::endl;
         btm = psum_.searchBtm(q, parent, idxInSib); // q is modified
         childIdx = btm->searchPos(q, retWeight); // q is modified
         weights[0] += retWeight;
