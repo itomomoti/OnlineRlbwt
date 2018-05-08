@@ -54,11 +54,12 @@ int main(int argc, char *argv[])
   using BtmNodeST = BtmNodeS<BTreeNodeT, uint32_t, 8>;
   using BtmSInfoT = BtmSInfo_BlockVec<BtmNodeST, 1024>;
   using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, Samples_WBitsBlockVec<1024>, BtmMInfoT, BtmSInfoT>;
-  OnlineLz77ViaRlbwt<DynRleT> rlbwt(1);
+  using Lz77ParserT = OnlineLz77ViaRlbwt<DynRleT>;
+  Lz77ParserT rlbwt(1);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   SizeT z = 0; // LZ phrase counter
-  bwttracker tracker = {0, 1, 0}; // BWT tracker for current LZ phrase prefix.
+  Lz77ParserT::bwttracker tracker = {0, 1, 0}; // BWT tracker for current LZ phrase prefix.
   char c; // Assume that the input character fits in char.
   unsigned char uc;
 
@@ -139,7 +140,7 @@ int main(int argc, char *argv[])
   double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
   std::cout << "LZ compression done. " << sec << " sec" << std::endl;
   std::cout << "Number of factors z = " << z << std::endl;
-  rlbwt.printStatictics(std::cout, false);
+  rlbwt.printStatistics(std::cout, false);
 
   return 0;
 }

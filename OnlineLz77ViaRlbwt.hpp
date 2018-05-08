@@ -20,19 +20,21 @@
 
 namespace itmmti 
 {
-  using bwtintvl = std::pair<uint64_t, uint64_t>;
-  using bwttracker = std::tuple<uint64_t, uint64_t, uint64_t>;
-
   /*!
    * @brief Online LZ77 computation via online RLBWT.
    * @note
-   *   ::OnlineRlbwt wraps ::DynRLE to use it for representing dynamic RLE of BWT.
-   *   In contrast to ::DynRle, OnlineRLWT has an implicit end marker (em_) at emPos_.
+   *   ::OnlineLz77ViaRlbwt wraps ::DynRle to use it for representing dynamic RLE of BWT.
+   *   In contrast to ::DynRle, OnlineLz77ViaRlbwt has an implicit end marker (em_) at emPos_.
    */
   template<class DynRle>
   class OnlineLz77ViaRlbwt
   {
   public:
+    //// bwtintvl: [left..right), where right bound is excluded.
+    using bwtintvl = std::pair<uint64_t, uint64_t>;
+    //// bwttracker: The first two uints represent a bwt-interval [left..right),
+    //// and the last uint is tracking the text-position of BWT[left].
+    using bwttracker = std::tuple<uint64_t, uint64_t, uint64_t>;
     using CharT = typename DynRle::CharT;
     using BTreeNodeT = typename DynRle::BTreeNodeT;
     static constexpr uintptr_t NOTFOUND{BTreeNodeT::NOTFOUND};
@@ -42,7 +44,7 @@ namespace itmmti
 
 
   private:
-    DynRle drle_;
+    DynRle drle_; //!< Dynamic RLE data structure with one sampling position per run.
     uint64_t emPos_; //!< Current position (0base) of end marker.
     uint64_t succSamplePos_; //!< Tracking txt-pos (0base) for bwt-position next to current emPos_.
     CharT em_; //!< End marker. It is used only when bwt[emPos_] is accessed (and does not matter if em_ appears in the input text).
@@ -52,8 +54,8 @@ namespace itmmti
     OnlineLz77ViaRlbwt
     (
      const size_t initNumBtms, //!< Initial size of DynRle to reserve.
-     const uint64_t initSampleUb = 256, //!< Initial upper bound of sample positions.
-     CharT em = 0 //!< End marker (default UINT64_MAX).
+     const uint64_t initSampleUb = 256, //!< Initial upper bound (exclusive) of sample positions.
+     CharT em = 0 //!< End marker (default 0).
      ) :
       drle_(initNumBtms, initSampleUb),
       emPos_(0),
@@ -115,7 +117,7 @@ namespace itmmti
      */
     void extend
     (
-     const CharT ch //!< 64bit-char to append.
+     const CharT ch //!< Character to append.
      ) {
       const uint64_t txtPos = drle_.getSumOfWeight(); //!< Txt-position of "ch" (0base).
       {
@@ -157,9 +159,9 @@ namespace itmmti
         if (nextIdxS != BTreeNodeT::NOTFOUND) { // Succcessor with "ch" was found.
           succSamplePos_ = drle_.getSampleFromIdxS(nextIdxS) + 1;
         } else { // Succcessor with "ch" was NOT found.
-          /* Take the smallest character larger "next_ch" than "ch".
-             If such character exists, set "succSamplePos_" to the
-             sampled position for the first BWT-run of "next_ch" minus one. */
+          //// Take the smallest character larger "next_ch" than "ch".
+          //// If such character exists, set "succSamplePos_" to the
+          //// sampled position for the first BWT-run of "next_ch" minus one.
           const auto nextRootS = drle_.getNextRootS(drle_.getParentFromBtmS(idxS / kBtmBS));
           if (reinterpret_cast<uintptr_t>(nextRootS) != BTreeNodeT::NOTFOUND) {
             succSamplePos_ = drle_.getSampleFromIdxS(reinterpret_cast<uint64_t>(nextRootS->getLmBtm_DirectJump()) * kBtmBS + 1) + 1;
@@ -172,7 +174,7 @@ namespace itmmti
     /*!
      * @brief Access to the current RLBWT by [] operator.
      */
-    uint64_t operator[]
+    CharT operator[]
     (
      uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEndmarker()].
      ) const noexcept {
@@ -180,9 +182,8 @@ namespace itmmti
 
       if (pos == emPos_) {
         return em_;
-      } else if (pos > emPos_) {
-        --pos;
       }
+      pos -= (pos > emPos_);
       uint64_t idxM = drle_.searchPosM(pos);
       return drle_.getCharFromIdxM(idxM);
     }
@@ -194,20 +195,18 @@ namespace itmmti
     uint64_t totalRank
     (
      const CharT ch,
-     uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEndmarker()].
+     uint64_t pos //!< in [0..getLenWithEndmarker()].
      ) const noexcept {
       assert(pos < getLenWithEndmarker());
 
-      if (pos > emPos_) {
-        --pos;
-      }
+      pos -= (pos > emPos_);
       return drle_.rank(ch, pos, true);
     }
 
 
     /*!
-     * @brief Compute bwt-interval for cW from bwt-interval for W
-     * @note Intervals are [left, right) : right bound is excluded
+     * @brief Compute bwt-interval for cW from bwt-interval for W.
+     * @note Intervals are [left..right), where right bound is excluded.
      */
     bool lfMap
     (
@@ -227,8 +226,8 @@ namespace itmmti
       }
 
       uint64_t r_in_drle = std::get<1>(tracker) - (std::get<1>(tracker) > emPos_); // Taking (implicit) end-marker into account.
-      /* +1 because in F we are not taking into account the end-marker,
-         which is in position 0 but not explicitly stored in F. */
+      //// +1 because in F we are not taking into account the end-marker,
+      //// which is in position 0 but not explicitly stored in F.
       r_in_drle = drle_.rank(ch, r_in_drle - 1, true) + 1;
       if (r_in_drle <= 1) {
         return false;
@@ -236,10 +235,8 @@ namespace itmmti
 
       uint64_t l_in_drle = std::get<0>(tracker) - (std::get<0>(tracker) > emPos_); // Taking (implicit) end-marker into account.
       const uint64_t idxM = drle_.searchPosM(l_in_drle); // l_in_drle is modified to relative pos.
-      /*
-       * In order to get idxS, replicate variant of rank function,
-       * where pos is specified by 'idxM' and 'relativePos' with several modifications.
-       */
+      //// In order to get idxS, replicate variant of rank function,
+      //// where pos is specified by 'idxM' and 'relativePos' with several modifications.
       const auto chNow = drle_.getCharFromIdxM(idxM);
       uint64_t idxS;
       {
@@ -263,7 +260,7 @@ namespace itmmti
         return false;
       }
 
-      // Update tracker.
+      //// Update tracker.
       std::get<0>(tracker) = l_in_drle;
       std::get<1>(tracker) = r_in_drle;
       if (l_in_drle == emPos_) {
@@ -310,12 +307,10 @@ namespace itmmti
     /*!
      * @brief LF map.
      */
-    uint64_t lfMap(uint64_t i){
+    uint64_t lfMap(uint64_t i) {
       assert(i < getLenWithEndmarker());
 
-      if (i > emPos_) {
-        --i;
-      }
+      i -= (i > emPos_);
       const uint64_t idxM = drle_.searchPosM(i);
       const auto ch = drle_.getCharFromIdxM(idxM);
       return drle_.rank(ch, idxM, i, true);
@@ -331,9 +326,7 @@ namespace itmmti
      ) const noexcept {
       uint64_t pos = 0;
       for (uint64_t i = 0; i < this->getLenWithEndmarker() - 1; ++i) {
-        if (pos > emPos_) {
-          --pos;
-        }
+        pos -= (pos > emPos_);
         const uint64_t idxM = drle_.searchPosM(pos);
         const auto ch = drle_.getCharFromIdxM(idxM);
         ofs.put(static_cast<unsigned char>(ch));
@@ -359,7 +352,7 @@ namespace itmmti
     /*!
      * @brief Print statistics
      */
-    void printStatictics
+    void printStatistics
     (
      std::ostream & os, //!< std::ostream (e.g., std::cout).
      const bool verbose
@@ -367,7 +360,7 @@ namespace itmmti
       os << "OnlineLz77ViaRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
       os << "Len with endmarker = " << getLenWithEndmarker() << std::endl;
       os << "emPos_ = " << emPos_ << ", succSamplePos_ = " << succSamplePos_ << ", em_ = " << em_ << std::endl;
-      drle_.printStatictics(os, verbose);
+      drle_.printStatistics(os, verbose);
       os << "OnlineLz77ViaRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
     }
 
@@ -392,9 +385,7 @@ namespace itmmti
 
       uint64_t pos = 0;
       for (uint64_t i = 0; i < this->getLenWithEndmarker() - 1; ++i) {
-        if (pos > emPos_) {
-          --pos;
-        }
+        pos -= (pos > emPos_);
         // std::cout << "T[" << i << "] searchPos(" << pos << ") ";
         const uint64_t idxM = drle_.searchPosM(pos);
         const auto ch = static_cast<unsigned char>(drle_.getCharFromIdxM(idxM));

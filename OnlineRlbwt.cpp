@@ -45,8 +45,8 @@ int main(int argc, char *argv[])
 	std::ifstream ifs(in);
 
   size_t j = 0;
-  const size_t step = 1000000;	//print status every step characters
-  long int last_step = 0;
+  const size_t step = 1000000; // print status every step characters
+  size_t last_step = 0;
 
   using BTreeNodeT = BTreeNode<32>;
   using BtmNodeMT = BtmNodeM_StepCode<BTreeNodeT, 32>;
@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     std::cout << "RLBWT construction done. " << sec << " sec" << std::endl;
   }
 
-  rlbwt.printStatictics(std::cout, false);
+  rlbwt.printStatistics(std::cout, false);
 
   if (!(out.empty())) {
     t1 = std::chrono::high_resolution_clock::now();

@@ -25,8 +25,8 @@ namespace itmmti
   /*!
    * @brief Online Run-length encoded Burrows–Wheeler transform (RLBWT).
    * @note
-   *   ::OnlineRlbwt wraps ::DynRLE to use it for representing dynamic RLE of BWT.
-   *   In contrast to ::DynRle, OnlineRLWT has an implicit end marker (em_) at emPos_.
+   *   ::OnlineRlbwt wraps ::DynRle to use it for representing dynamic RLE of BWT.
+   *   In contrast to ::DynRle, OnlineRlbwt has an implicit end marker (em_) at emPos_.
    */
   template<class DynRle>
   class OnlineRlbwt
@@ -87,7 +87,7 @@ namespace itmmti
      */
     void extend
     (
-     const CharT ch //!< 64bit-char to append.
+     const CharT ch //!< Character to append.
      ) {
       uint64_t idxM = drle_.insertRun(emPos_, ch);
       emPos_ = drle_.rank(ch, idxM, emPos_, true);
@@ -99,15 +99,14 @@ namespace itmmti
      */
     CharT operator[]
     (
-     uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEndmarker()].
+     uint64_t pos //!< in [0..OnlineRlbwt::getLenWithEndmarker()].
      ) const noexcept {
       assert(pos < getLenWithEndmarker());
 
       if (pos == emPos_) {
         return em_;
-      } else if (pos > emPos_) {
-        --pos;
       }
+      pos -= (pos > emPos_);
       uint64_t idxM = drle_.searchPosM(pos);
       return drle_.getCharFromIdxM(idxM);
     }
@@ -119,13 +118,11 @@ namespace itmmti
     uint64_t totalRank
     (
      const CharT ch,
-     uint64_t pos //!< in [0, OnlineRLBWT::getLenWithEndmarker()].
+     uint64_t pos //!< in [0..OnlineRlbwt::getLenWithEndmarker()].
      ) const noexcept {
       assert(pos < getLenWithEndmarker());
 
-      if (pos > emPos_) {
-        --pos;
-      }
+      pos -= (pos > emPos_);
       return drle_.rank(ch, pos, true);
     }
 
@@ -165,9 +162,7 @@ namespace itmmti
     uint64_t lfMap(uint64_t i){
       assert(i < getLenWithEndmarker());
 
-      if (i > emPos_) {
-        --i;
-      }
+      i -= (i > emPos_);
       const uint64_t idxM = drle_.searchPosM(i);
       const auto ch = drle_.getCharFromIdxM(idxM);
       return drle_.rank(ch, idxM, i, true);
@@ -183,12 +178,10 @@ namespace itmmti
      ) const noexcept {
       uint64_t pos = 0;
       for (uint64_t i = 0; i < this->getLenWithEndmarker() - 1; ++i) {
-        if (pos > emPos_) {
-          --pos;
-        }
+        pos -= (pos > emPos_);
         const uint64_t idxM = drle_.searchPosM(pos);
         const auto ch = drle_.getCharFromIdxM(idxM);
-        ofs.put(static_cast<unsigned char>(ch));
+        ofs.put(static_cast<signed char>(static_cast<unsigned char>(ch)));
         pos = drle_.rank(ch, idxM, pos, true);
       }
     }
@@ -211,7 +204,7 @@ namespace itmmti
     /*!
      * @brief Print statistics
      */
-    void printStatictics
+    void printStatistics
     (
      std::ostream & os, //!< std::ostream (e.g., std::cout).
      const bool verbose
@@ -219,7 +212,7 @@ namespace itmmti
       os << "OnlineRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
       os << "Len with endmarker = " << getLenWithEndmarker() << std::endl;
       os << "emPos_ = " << emPos_ << ", em_ = " << em_ << std::endl;
-      drle_.printStatictics(os, verbose);
+      drle_.printStatistics(os, verbose);
       os << "OnlineRlbwt object (" << this << ") " << __func__ << "(" << verbose << ") END" << std::endl;
     }
 
@@ -244,9 +237,7 @@ namespace itmmti
 
       uint64_t pos = 0;
       for (uint64_t i = 0; i < this->getLenWithEndmarker() - 1; ++i) {
-        if (pos > emPos_) {
-          --pos;
-        }
+        pos -= (pos > emPos_);
         // std::cout << "T[" << i << "] searchPos(" << pos << ") ";
         const uint64_t idxM = drle_.searchPosM(pos);
         const auto ch = static_cast<unsigned char>(drle_.getCharFromIdxM(idxM));
