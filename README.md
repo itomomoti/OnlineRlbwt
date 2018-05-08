@@ -33,6 +33,7 @@ Executables (without option shows help).
 
 ```sh
 ./OnlineRlbwt
+./OnlineRindex
 ./OnlineLz77ViaRlbwt
 ./DecompressLz77
 ```
