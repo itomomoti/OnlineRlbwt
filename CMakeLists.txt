@@ -50,6 +50,9 @@ target_link_libraries(OnlineLz77ViaRlbwt BTree)
 
 add_executable(DecompressLz77 DecompressLz77.cpp)
 
+add_executable(OnlineRindex OnlineRindex.cpp)
+target_link_libraries(OnlineRindex Basics)
+target_link_libraries(OnlineRindex BTree)
 
 
 #### TEST

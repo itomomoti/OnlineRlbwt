@@ -35,6 +35,11 @@
 
 namespace itmmti
 {
+  /*!
+   * @brief
+   * @tparam tparam_BTreeNodeT BTreeNode type.
+   * @tparam tparam_kBtmBM Arity for bottom node of B+tree, which should be in {32, 64, 128}.
+   */
   template<typename tparam_BTreeNodeT, uint8_t tparam_kBtmBM>
   class BtmNodeM_StepCode
   {
@@ -87,12 +92,12 @@ namespace itmmti
     }
 
 
-    uint16_t getNumChildren() const noexcept {
+    uint8_t getNumChildren() const noexcept {
       return numChildren_;
     }
 
 
-    uint16_t getIdxInSibling() const noexcept {
+    uint8_t getIdxInSibling() const noexcept {
       return idxInSibling_;
     }
 
@@ -250,7 +255,7 @@ namespace itmmti
 
     void shrinkBitCapacity() {
       if (this->stccCapacity_ - this->stccSize_ > kUnitBits) {
-        this->stccCapacity_ = static_cast<uint16_t>(stcc_.setBitCapacity(static_cast<size_t>(this->stccSize_)));
+        this->stccCapacity_ = static_cast<uint16_t>(this->stcc_.setBitCapacity(static_cast<size_t>(this->stccSize_)));
       }
     }
 
@@ -283,8 +288,8 @@ namespace itmmti
      */
     void updateWCodesAuxM
     (
-     const uint16_t idxBeg,
-     const uint16_t idxEnd
+     const uint8_t idxBeg,
+     const uint8_t idxEnd
      ) noexcept {
       assert(idxBeg < idxEnd);
 
@@ -675,12 +680,12 @@ namespace itmmti
     {}
 
 
-    uint16_t getNumChildren() const noexcept {
+    uint8_t getNumChildren() const noexcept {
       return numChildren_;
     }
 
 
-    uint16_t getIdxInSibling() const noexcept {
+    uint8_t getIdxInSibling() const noexcept {
       return idxInSibling_;
     }
 
@@ -1093,11 +1098,11 @@ namespace itmmti
    * @par Notation
    *   - T: Current string represented by RLE.
    *   - Mixed tree: B+tree representing RLE of T.
-   *     - btmM: Index of bottom node of B+tree on the array-based implementation.
+   *     - btmM: Index of bottom node of B+tree.
    *             Each bottom node "btmM" can have "kBtmB" children, which correspond to indexes [btmM * kBtmB, (btmM+1) * kBtmB).
    *     - idxM: Indexes that are corresponding to children of "btmM".
    *   - Separated tree: B+tree separately representing runs for each character.
-   *     - btmS: Index of bottom node of B+tree on the array-based implementation (all separated trees share arrays).
+   *     - btmS: Index of bottom node of B+tree.
    *             Each bottom node "btmS" can have "kBtmB" children, which correspond to indexes [btmS * kBtmB, (btmS+1) * kBtmB).
    *     - idxS: Indexes that are corresponding to children of "btmS".
    */
@@ -1189,9 +1194,49 @@ namespace itmmti
       setNewBtmNodeM();
       btmMInfo_.setParentRefOfBtmM(0, srootM_.root_, 0);
       {
-        const uint64_t newVals[] = {0};
-        const uint64_t newLinks[] = {0};
-        insertNewElemM(0, 0, newVals, newLinks, 1, 0);
+        const uint64_t dummy[] = {0};
+        insertNewElemM(0, 0, dummy, dummy, 1, 0);
+      }
+
+      auto * dummyRootS = new BTreeNodeT(nullptr, true, true, true, false, true);
+      dummyRootS->putFirstBtm(nullptr, 0);
+      srootA_.setRoot(new BTreeNodeT(dummyRootS, true, true, true, true));
+      srootA_.root_->pushbackBTreeNode(dummyRootS);
+    }
+
+
+    /*!
+     * @brief Reserve space to accomodate 'initNumBtms' bottoms, and init.
+     */
+    void init_rindex
+    (
+     const size_t initNumBtms,
+     const uint64_t initSampleUb
+     ) {
+      // {//debug
+      //   std::cerr << __func__ << "initNumBtms = " << initNumBtms << ", initSampleUb = " << initSampleUb << std::endl;
+      // }
+      assert(initNumBtms > 0);
+
+      if (isReady()) {
+        clearAll();
+      }
+      idxM2S_.decreaseW(1);
+      idxM2S_.increaseW(8);
+      idxM2S_.reserve(initNumBtms * kBtmBM);
+      idxS2M_.decreaseW(1);
+      idxS2M_.increaseW(8);
+      idxS2M_.reserve(initNumBtms * kBtmBS);
+      samples_.increaseSampleUb(initSampleUb);
+
+      srootM_.setRoot(new BTreeNodeT(reinterpret_cast<void *>(0), true, true, true, true));
+      srootM_.root_->putFirstBtm(reinterpret_cast<void *>(0), 0);
+      // sentinel
+      setNewBtmNodeM();
+      btmMInfo_.setParentRefOfBtmM(0, srootM_.root_, 0);
+      {
+        const uint64_t dummy[] = {0, 0};
+        insertNewElemM(0, 0, dummy, dummy, 2, 0); // insert TWO elements of weight zero
       }
 
       auto * dummyRootS = new BTreeNodeT(nullptr, true, true, true, false, true);
@@ -1425,7 +1470,7 @@ namespace itmmti
     /*!
      * @brief Get char of run corresponding to "idxS"
      */
-    uint64_t getCharFromIdxS(uint64_t idxS) const noexcept {
+    CharT getCharFromIdxS(uint64_t idxS) const noexcept {
       // {//debug
       //   std::cerr << __func__ << ": idxS = " << idxS << std::endl;
       // }
@@ -2416,7 +2461,7 @@ namespace itmmti
     uint64_t setupNewSTree
     (
      BTreeNodeT * predNode,
-     const uint64_t ch
+     const CharT ch
      ) {
       // {//debug
       //   std::cerr << __func__ << ": predNode = " << predNode << ", ch = " << ch << std::endl;
@@ -2857,7 +2902,7 @@ namespace itmmti
     (
      const uint64_t idxS,
      const uint64_t link,
-     const uint64_t ch
+     const CharT ch //!< Character to insert.
      ) noexcept {
       // {//debug
       //   std::cerr << __func__ << " idxS = " << idxS << ", link = " << link << ", ch = " << ch << std::endl;
@@ -2877,7 +2922,7 @@ namespace itmmti
      const uint64_t idxBase,
      const uint8_t childIdx,
      const uint64_t newLink, //!< new link to insert
-     const uint64_t ch
+     const CharT ch //!< Character to insert.
      ) noexcept {
       // {//debug
       //   std::cerr << __func__ << " idxBase = " << idxBase << ", childIdx = " << (int)childIdx
@@ -3037,8 +3082,9 @@ namespace itmmti
       // update btm node
       auto & btmNodeM = btmMInfo_.getBtmNodeRef(idxM / kBtmBM);
       const uint64_t curWeight = btmNodeM.readStccVal(idxM % kBtmBM);
-      assert(curWeight + change > 0);
-      const uint64_t newVals[] = {static_cast<uint64_t>(curWeight + change)};
+      const uint64_t uschange = static_cast<uint64_t>(change); // cast to unsigned
+      // assert(curWeight + change > 0);
+      const uint64_t newVals[] = {curWeight + uschange};
       btmNodeM.replace(newVals, 1, idxM % kBtmBM);
       // update mixed tree
       changePSumFromParentM(idxM / kBtmBM, change);
@@ -3056,7 +3102,7 @@ namespace itmmti
     (
      const uint64_t idxM,
      const uint64_t splitPos,
-     const uint64_t ch
+     const CharT ch //!< Character to insert.
      ) noexcept {
       // {//debug
       //   std::cerr << __func__ << " idxM = " << idxM << ", splitPos = " << splitPos
@@ -3092,13 +3138,13 @@ namespace itmmti
 
 
     /*!
-     * @brief Insert new run of character 'ch' and length '1' after 'idxM'.
+     * @brief Insert new run of character 'ch' and length '1' after 'idxM' without merging.
      * @return IdxM of the inserted run.
      */
     uint64_t insertRunAfter
     (
      const uint64_t idxM,
-     const uint64_t ch
+     const CharT ch //!< Character to insert.
      ) noexcept {
       // {//debug
       //   std::cerr << __func__ << ": idxM = " << idxM << ", ch = " << ch << std::endl;
@@ -3158,7 +3204,6 @@ namespace itmmti
      const uint64_t newSample
      ) noexcept {
       assert(isValidIdxM(idxM));
-      assert(sampleUb_);
 
       samples_.write(newSample, idxM);
     }
@@ -3170,7 +3215,7 @@ namespace itmmti
     uint64_t pushbackRun
     (
      uint64_t & pos, //!< [out] It is set to relative position of a run.
-     const uint64_t ch //!< 64bit-char.
+     const CharT ch //!< Character to insert.
      ) {
       // {//debug
       //   std::cerr << __func__ << ": pos = " << pos << ", ch = " << ch << std::endl;
@@ -3178,6 +3223,36 @@ namespace itmmti
 
       const auto btmM = reinterpret_cast<uint64_t>(srootM_.root_->getRmBtm());
       const auto idxM = btmM * kBtmBM + getNumChildrenFromBtmM(btmM) - 1;
+      const auto idxS = idxM2S(idxM);
+      if (idxS == 0) { // dummy
+        pos = 0;
+        return insertRunAfter(0, ch);
+      }
+      if (getCharFromBtmS(idxS / kBtmBS) != ch) {
+        pos = 0;
+        return insertRunAfter(idxM, ch);
+      } else { // merge into the last run
+        pos = getWeightFromIdxM(idxM);
+        changeWeight(idxM, 1);
+        return idxM;
+      }
+    }
+
+
+    /*!
+     * @brief Pushback a run, merging into the last run if possible.
+     */
+    uint64_t pushbackRun_rindex
+    (
+     uint64_t & pos, //!< [out] It is set to relative position of a run.
+     const CharT ch //!< Character to insert.
+     ) {
+      // {//debug
+      //   std::cerr << __func__ << ": pos = " << pos << ", ch = " << ch << std::endl;
+      // }
+
+      const auto btmM = reinterpret_cast<uint64_t>(srootM_.root_->getRmBtm());
+      const auto idxM = getPrevIdxM(btmM * kBtmBM + getNumChildrenFromBtmM(btmM) - 1); // Skip the last idxM, which is sentinel in rindex.
       const auto idxS = idxM2S(idxM);
       if (idxS == 0) { // dummy
         pos = 0;
@@ -3215,7 +3290,7 @@ namespace itmmti
     (
      uint64_t idxM,
      uint64_t & pos, //!< [in,out] 0base position where inserted run will start. It is modified to relative position in a run.
-     const uint64_t ch //!< 64bit-char.
+     const CharT ch //!< Character to insert.
      ) {
       // {//debug
       //   std::cerr << __func__ << ": idxM = " << idxM << ", pos = " << pos << ", ch = " << ch << std::endl;
@@ -3245,7 +3320,7 @@ namespace itmmti
     uint64_t insertRun
     (
      uint64_t & pos, //!< [in,out] 0base position where inserted run will start. It is modified to relative position in a run.
-     const uint64_t ch //!< 64bit-char.
+     const CharT ch //!< Character to insert.
      ) {
       if (pos > srootM_.root_->getSumOfWeight()) {
         return BTreeNodeT::NOTFOUND;
@@ -3263,7 +3338,7 @@ namespace itmmti
     uint64_t insertRun
     (
      uint64_t && pos, //!< 0base position where inserted run will start.
-     const uint64_t ch //!< 64bit-char.
+     const CharT ch //!< Character to insert.
      ) {
       auto tmp = pos;
       return insertRun(tmp, ch);
@@ -3467,7 +3542,7 @@ namespace itmmti
     }
 
 
-    void printStatictics
+    void printStatistics
     (
      std::ostream & os,
      const bool verbose
@@ -3601,11 +3676,13 @@ namespace itmmti
           for (uint64_t i = 0; i < btmSizeM; ++i) {
             for (uint64_t j = 0; j < getNumChildrenFromBtmM(i); ++j) {
               uint64_t idxM = kBtmBM * i + j;
-              if (idxM != idxS2M(idxM2S(idxM))) {
-                os << "error!! links of idxM2S and idxS2M: idxM = " << idxM
-                   << ", idxS = " << idxM2S(idxM) << std::endl; // WARNING, links are not maintained correctly
-                printDebugInfoOfBtmM(idxM / kBtmBM, std::cerr);
-                printDebugInfoOfBtmS(idxM2S(idxM) / kBtmBS, std::cerr);
+              if (getWeightFromIdxM(idxM)) {
+                if (idxM != idxS2M(idxM2S(idxM))) {
+                  os << "error!! links of idxM2S and idxS2M: idxM = " << idxM
+                     << ", idxS = " << idxM2S(idxM) << std::endl; // WARNING, links are not maintained correctly
+                  printDebugInfoOfBtmM(idxM / kBtmBM, std::cerr);
+                  printDebugInfoOfBtmS(idxM2S(idxM) / kBtmBS, std::cerr);
+                }
               }
             }
           }
@@ -3665,22 +3742,24 @@ namespace itmmti
           uint64_t c = UINT64_MAX;
           os << "check runs:" << std::endl;
           // std::cerr << srootM_.root_ << " " << srootA_.root_ << std::endl;
-          uint64_t pos = 0;
+          uint64_t numRun = 0;
           uint64_t len = 0;
-          for (auto idxM = searchPosM(pos); idxM != BTreeNodeT::NOTFOUND; idxM = getNextIdxM(idxM)) {
-            ++pos;
-            len += getWeightFromIdxM(idxM);
-            if (getWeightFromIdxM(idxM) == 0) {
-              os << "error!! detected 0 length run: " << idxM << ", " << pos << std::endl;
+          for (auto idxM = searchPosM(len); idxM != BTreeNodeT::NOTFOUND; idxM = getNextIdxM(idxM)) {
+            if (len < getSumOfWeight()) {
+              len += getWeightFromIdxM(idxM);
+              ++numRun;
+              if (getWeightFromIdxM(idxM) == 0) {
+                os << "error!! detected 0 length run: " << idxM << ", " << numRun << std::endl;
+              }
+              if (c == getCharFromIdxM(idxM)) {
+                auto idxM0 = getPrevIdxM(idxM);
+                os << "error!! detected consecutive runs having the same char: " 
+                   << idxM << ", " << numRun << ", (" << c << ", " << getWeightFromIdxM(idxM0) << ")" << ", (" << c << ", " << getWeightFromIdxM(idxM) << ")" << std::endl;
+              }
+              c = getCharFromIdxM(idxM);
             }
-            if (c == getCharFromIdxM(idxM)) {
-              auto idxM0 = getPrevIdxM(idxM);
-              os << "error!! detected consecutive runs having the same char: " 
-                 << idxM << ", " << pos << ", (" << c << ", " << getWeightFromIdxM(idxM0) << ")" << ", (" << c << ", " << getWeightFromIdxM(idxM) << ")" << std::endl;
-            }
-            c = getCharFromIdxM(idxM);
           }
-          std::cerr << "run: " << pos << ", len: " << len << std::endl;
+          os << "run: " << numRun << ", len: " << len << std::endl;
         }
 
         // {
@@ -3695,42 +3774,43 @@ namespace itmmti
         //   srootM_.root_->printStatistics(std::cerr, true);
         // }
 
-        {
-          os << "Information on M" << std::endl;
-          uint64_t pos = 0;
-          for (uint64_t btmM = reinterpret_cast<uintptr_t>(srootM_.root_->getLmBtm_DirectJump());
-               btmM != BTreeNodeT::NOTFOUND;
-               btmM = getNextBtmM(btmM)) {
-            os << "[" << btmM * kBtmBM << "~" << (btmM+1) * kBtmBM - 1<< "]";
-            printDebugInfoOfBtmM(btmM, std::cerr);
-          }
-          os << std::endl;
-        }
+        // //// Print everything
+        // {
+        //   os << "Information on M" << std::endl;
+        //   uint64_t pos = 0;
+        //   for (uint64_t btmM = reinterpret_cast<uintptr_t>(srootM_.root_->getLmBtm_DirectJump());
+        //        btmM != BTreeNodeT::NOTFOUND;
+        //        btmM = getNextBtmM(btmM)) {
+        //     os << "[" << btmM * kBtmBM << "~" << (btmM+1) * kBtmBM - 1<< "]";
+        //     printDebugInfoOfBtmM(btmM, std::cerr);
+        //   }
+        //   os << std::endl;
+        // }
 
-        {
-          os << "Alphabet: " << std::endl;
-          for (const auto * rootS = getFstRootS();
-               reinterpret_cast<uintptr_t>(rootS) != BTreeNodeT::NOTFOUND;
-               rootS = getNextRootS(rootS)) {
-            os << "(" << getCharFromNodeS(rootS) << ", " << rootS->getSumOfWeight() << ") ";
-          }
-          os << std::endl;
-          os << std::endl;
-        }
+        // {
+        //   os << "Alphabet: " << std::endl;
+        //   for (const auto * rootS = getFstRootS();
+        //        reinterpret_cast<uintptr_t>(rootS) != BTreeNodeT::NOTFOUND;
+        //        rootS = getNextRootS(rootS)) {
+        //     os << "(" << getCharFromNodeS(rootS) << ", " << rootS->getSumOfWeight() << ") ";
+        //   }
+        //   os << std::endl;
+        //   os << std::endl;
+        // }
 
-        {
-          os << "Information on S" << std::endl;
-          for (const auto * rootS = getFstRootS();
-               reinterpret_cast<uintptr_t>(rootS) != BTreeNodeT::NOTFOUND;
-               rootS = getNextRootS(rootS)) {
-            for (uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm_DirectJump());
-                 btmS != BTreeNodeT::NOTFOUND;
-                 btmS = getNextBtmS(btmS)) {
-              os << "[" << btmS * kBtmBS << "~" << (btmS+1) * kBtmBS - 1 << "]";
-              printDebugInfoOfBtmS(btmS, std::cerr);
-            }
-          }
-        }
+        // {
+        //   os << "Information on S" << std::endl;
+        //   for (const auto * rootS = getFstRootS();
+        //        reinterpret_cast<uintptr_t>(rootS) != BTreeNodeT::NOTFOUND;
+        //        rootS = getNextRootS(rootS)) {
+        //     for (uint64_t btmS = reinterpret_cast<uintptr_t>(rootS->getLmBtm_DirectJump());
+        //          btmS != BTreeNodeT::NOTFOUND;
+        //          btmS = getNextBtmS(btmS)) {
+        //       os << "[" << btmS * kBtmBS << "~" << (btmS+1) * kBtmBS - 1 << "]";
+        //       printDebugInfoOfBtmS(btmS, std::cerr);
+        //     }
+        //   }
+        // }
       }
     }
   };
