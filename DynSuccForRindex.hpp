@@ -48,7 +48,7 @@ namespace itmmti
     using PSumT = PSumWithValue<BTreeNodeT, BtmNodeT>;
     static constexpr uint8_t kB{BTreeNodeT::kB};
     static constexpr uint8_t kBtmB{BtmNodeT::kBtmB};
-    /* Key (uint stored in successor data structure) and associated value. */
+    // //// Key (uint stored in successor data structure) and associated value.
     // using KeyVal = std::pair<uint64_t, uint64_t>;
 
 
@@ -108,44 +108,53 @@ namespace itmmti
 
 
     /*!
-     * @brief Successor query.
-     * @return Get KeyVal with smallest key larger than or equal to given integer.
-     *         Return {UINT64_MAX, UINT64_MAX} when not found (in the sentinel).
+     * @brief Function to get text-position for "BWT[bwtpos + 1]", where "BWT[bwtpos]" corresponds to "T[txtpos]".
      */
-    // DifVal succ
+    // uint64_t calcNextPos
     // (
-    //  const uint64_t i //!< Input for predecessor query.
+    //  uint64_t txtPos //!< Text-position for currently focused character.
     //  ) const noexcept {
-    //   assert(i > 0); // Simplification (under specific application).
+    //   std::cerr << __func__ << ": txtPos = " << txtPos << std::endl;
 
-    //   uint64_t q = i - 1; // -1 for catching "equal to" condition.
     //   BTreeNodeT * parent;
     //   uint8_t idxInSib;
-    //   auto btm = psum_.searchBtm(q, parent, idxInSib);
+    //   auto btm = psum_.searchBtm(txtPos, parent, idxInSib);
 
-    //   uint64_t retWeight;
-    //   uint64_t retVal;
-    //   btm->searchPos(q, retWeight, retVal);
-    //   return {retWeight - q - 1, retVal};
+    //   uint64_t retWeight, retVal;
+    //   btm->searchPos(txtPos, retWeight, retVal);
+    //   return retVal - (retWeight - txtPos - 1);
     // }
 
 
     /*!
      * @brief Function to get text-position for "BWT[bwtpos + 1]", where "BWT[bwtpos]" corresponds to "T[txtpos]".
      */
-    uint64_t nextPos
+    uint64_t calcNextPos
     (
-     uint64_t txtpos //!< Text-position for currently focused character.
+     const uint64_t txtPos, //!< Text-position for currently focused character.
+     const uint64_t txtLen, //!< Text length without end marker.
+     const uint64_t emPrev, //!< Text-position for previous character of implicit end marker.
+     const uint64_t emNext //!< Text-position for next character of implicit end marker.
      ) const noexcept {
-      // std::cerr << __func__ << ": pos = " << pos << std::endl;
+      // std::cerr << __func__ << ": txtPos = " << txtPos << ", txtLen = " << txtLen
+      //           << ", emPrev = " << emPrev << ", emNext = " << emNext << std::endl;
+      assert(txtPos <= txtLen);
 
+      uint64_t q = txtPos;
       BTreeNodeT * parent;
       uint8_t idxInSib;
-      auto btm = psum_.searchBtm(txtpos, parent, idxInSib);
+      auto btm = psum_.searchBtm(q, parent, idxInSib);
 
       uint64_t retWeight, retVal;
-      uint16_t childIdx = btm->searchPos(txtpos, retWeight, retVal);
-      return retVal - (retWeight - txtpos - 1);
+      btm->searchPos(q, retWeight, retVal);
+      const uint64_t dist = retWeight - q - 1; // distance to sampled position
+      if (txtPos <= emPrev && emPrev - txtPos <= dist) {
+        return txtLen - (emPrev - txtPos);
+      } else if (txtLen - txtPos <= dist) {
+        return emNext - (txtLen - txtPos);
+      } else {
+        return retVal - dist;
+      }
     }
 
 

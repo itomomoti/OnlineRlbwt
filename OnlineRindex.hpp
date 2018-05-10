@@ -30,12 +30,12 @@ namespace itmmti
   class OnlineRlbwtIndex
   {
   public:
-    //// bwtintvl: Intervals are [left..right) : right bound is excluded.
-    using bwtintvl = std::pair<uint64_t, uint64_t>;
-    //// pattracker: The first two uints represent a bwt-interval [left..right),
+    //// BwtIntvl: Intervals are [left..right) : right bound is excluded.
+    using BwtIntvl = std::pair<uint64_t, uint64_t>;
+    //// PatTracker: The first two uints represent a bwt-interval [left..right),
     //// the third uint is tracking the idxS from which we can obtain sampled position for "BWT[left]",
     //// and the last uint represents how far we are from the last sampled position.
-    using pattracker = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
+    using PatTracker = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
     using CharT = typename DynRle::CharT;
     using BTreeNodeT = typename DynRle::BTreeNodeT;
     static constexpr uintptr_t NOTFOUND{BTreeNodeT::NOTFOUND};
@@ -50,6 +50,7 @@ namespace itmmti
     uint64_t emPos_; //!< Current position (0base) of end marker.
     uint64_t prevSamplePos_; //!< Tracking txt-pos (0base) for character at bwt-position previous to current emPos_.
     uint64_t nextSamplePos_; //!< Tracking txt-pos (0base) for character at bwt-position next to current emPos_.
+    uint64_t lastSamplePos_; //!< Tracking txt-pos (0base) for last bwt-position.
     CharT em_; //!< End marker. It is used only when bwt[emPos_] is accessed (and does not matter if em_ appears in the input text).
 
 
@@ -62,12 +63,11 @@ namespace itmmti
      ) :
       drle_(),
       succ_(),
-      emPos_(0),
-      prevSamplePos_(0),
-      nextSamplePos_(0),
       em_(em)
     {
-      drle_.init_rindex(initNumBtms, initSampleUb);
+      if (initNumBtms) {
+        drle_.init(initNumBtms, initSampleUb);
+      }
     }
 
 
@@ -88,8 +88,11 @@ namespace itmmti
       if (isReady()) {
         clearAll();
       }
-      drle_.init_rindex(initNumBtms, initSampleUb);
-      succ_.init();
+      if (initNumBtms) {
+        drle_.init(initNumBtms, initSampleUb);
+        succ_.init();
+        emPos_ = prevSamplePos_ = nextSamplePos_ = lastSamplePos_ = 0;
+      }
     }
 
 
@@ -138,6 +141,14 @@ namespace itmmti
 
 
     /*!
+     * @brief Return current length excluding end marker.
+     */
+    uint64_t getLenWithoutEndmarker() const noexcept {
+      return drle_.getSumOfWeight();
+    }
+
+
+    /*!
      * @brief Get current "prevSamplePos_".
      */
     uint64_t getPrevSamplePos() const noexcept {
@@ -165,6 +176,8 @@ namespace itmmti
      * @brief Set associated value at "idxM".
      */
     void setSample(uint64_t idxM, uint64_t val) noexcept {
+      // std::cerr << __func__ << ": idxM = " << idxM << ", val = " << val << std::endl;
+
       drle_.setSample(idxM, val);
     }
 
@@ -185,60 +198,35 @@ namespace itmmti
       }
 
       uint64_t idxM;
-      auto pos = emPos_;
+      auto bwtPos = emPos_;
       bool split = false;
       uint64_t originalSample = 0;
-      if (pos < drle_.getSumOfWeight()) {
-        idxM = drle_.searchPosM(pos);
-        if ((pos > 0) && (drle_.getCharFromIdxM(idxM) != ch)) { // split a run
+      if (bwtPos < drle_.getSumOfWeight()) {
+        idxM = drle_.searchPosM(bwtPos);
+        if ((bwtPos > 0) && (drle_.getCharFromIdxM(idxM) != ch)) { // split a run
           split = true;
           originalSample = drle_.getSampleFromIdxM(idxM);
         }
-        idxM = drle_.insertRun(idxM, pos, ch); // 'pos' is modified to be the relative pos in the run of 'idxM'.
+        idxM = drle_.insertRun(idxM, bwtPos, ch); // 'bwtPos' is modified to be the relative pos in the run of 'idxM'.
       } else {
-        idxM = drle_.pushbackRun_rindex(pos, ch);
+        idxM = drle_.pushbackRun(bwtPos, ch);
       }
-      emPos_ = drle_.rank(ch, idxM, pos, true);
+      emPos_ = drle_.rank(ch, idxM, bwtPos, true);
 
       const uint64_t exponent = drle_.getWeightFromIdxM(idxM);
-      // std::cout << __func__ << ": pos = " << pos << ", exponent = " << exponent << ", split = " << split
-      //           << ", prev = " << prevSamplePos_ << ", next = " << nextSamplePos_ << std::endl;
-      if (pos + 1 != exponent) {
-        ++nextSamplePos_;
-      } else {
-        if (exponent > 1) {
-          succ_.removeKey(prevSamplePos_);
-        }
-        setSample(drle_.getNextIdxM(idxM), txtPos);
-        succ_.setKeyVal(txtPos, nextSamplePos_);
-        //// Update nextSamplePos_
-        nextSamplePos_ = 0;
-        uint64_t idxS = drle_.idxM2S(idxM);
-        const uint64_t nextIdxS = drle_.getNextIdxS(idxS);
-        if (nextIdxS != BTreeNodeT::NOTFOUND) { // Succcessor with "ch" was found.
-          const auto pos = drle_.getSampleFromIdxS(nextIdxS);
-          nextSamplePos_ = succ_.nextPos(pos) + 1;
-        } else { // Succcessor with "ch" was NOT found.
-          const auto nextRootS = drle_.getNextRootS(drle_.getParentFromBtmS(idxS / kBtmBS));
-          if (reinterpret_cast<uintptr_t>(nextRootS) != BTreeNodeT::NOTFOUND) {
-            nextSamplePos_ = 1;
-            const auto btmS = reinterpret_cast<uint64_t>(nextRootS->getLmBtm_DirectJump());
-            if (btmS) {
-              const auto pos = drle_.getSampleFromIdxS(btmS * kBtmBS + 1);
-              nextSamplePos_ += succ_.nextPos(pos);
-            }
-          }
-        }
-      }
 
-      if (pos == 0) {
-        if (exponent == 1) {
-          setSample(idxM, prevSamplePos_);
+      const auto prevSamplePos_old = prevSamplePos_;
+      const auto nextSamplePos_old = nextSamplePos_;
+      if (bwtPos == 0) {
+        if (bwtPos == 0 && idxM > 1) {
+          if (exponent == 1) {
+            setSample(idxM, prevSamplePos_old);
+          }
+          if (split) {
+            setSample(drle_.getPrevIdxM(idxM), originalSample);
+          }
+          succ_.setKeyVal(prevSamplePos_old, txtPos);
         }
-        if (split) {
-          setSample(drle_.getPrevIdxM(idxM), originalSample);
-        }
-        succ_.setKeyVal(prevSamplePos_, txtPos);
         //// Update prevSamplePos_
         prevSamplePos_ = 0;
         uint64_t idxS = drle_.getPrevIdxS(drle_.idxM2S(idxM));
@@ -253,10 +241,37 @@ namespace itmmti
         }
         if (prevIdxM) {
           prevIdxM = drle_.getNextIdxM(prevIdxM);
-          prevSamplePos_ = drle_.getSampleFromIdxM(prevIdxM) + 1;
+          if (prevIdxM != BTreeNodeT::NOTFOUND) {
+            prevSamplePos_ = drle_.getSampleFromIdxM(prevIdxM) + 1;
+          } else {
+            prevSamplePos_ = lastSamplePos_ + 1;
+          }
         }
       } else {
         ++prevSamplePos_;
+      }
+
+      //// Update nextSamplePos_
+      if (bwtPos + 1 < exponent) {
+        ++nextSamplePos_;
+      } else if (emPos_ == txtPos + 1) {
+        nextSamplePos_ = txtPos + 2;
+      } else {
+        nextSamplePos_ = succ_.calcNextPos(prevSamplePos_, txtPos, prevSamplePos_old, nextSamplePos_old);
+      }
+
+      //// Update successor data structure.
+      if (bwtPos + 1 == exponent) {
+        const auto nextIdxM = drle_.getNextIdxM(idxM);
+        if (nextIdxM != BTreeNodeT::NOTFOUND) {
+          if (exponent > 1) {
+            succ_.removeKey(prevSamplePos_old);
+          }
+          setSample(nextIdxM, txtPos);
+          succ_.setKeyVal(txtPos, nextSamplePos_old);
+        } else {
+          lastSamplePos_ = txtPos;
+        }
       }
     }
 
@@ -296,36 +311,47 @@ namespace itmmti
 
     
     /*!
-     * @brief Function to get text-position for "BWT[bwtpos + 1]", where "BWT[bwtpos]" corresponds to "T[txtpos]".
+     * @brief Function to get text-position for "BWT[bwtPos + 1]", where "BWT[bwtPos]" corresponds to "T[txtPos]".
      */
-    uint64_t nextPos
+    uint64_t calcNextPos
     (
-     uint64_t txtpos //!< Text-position for currently focused character.
+     const uint64_t txtPos //!< Text-position for currently focused character.
      ) const noexcept {
-      return succ_.nextPos(txtpos);
+      return succ_.calcNextPos(txtPos, getLenWithoutEndmarker(), prevSamplePos_, nextSamplePos_);
+      // if (txtPos < tailBeg_) {
+      //   return succ_.calcNextPos(txtPos, getLenWithoutEndmarker(), prevSamplePos_, nextSamplePos_);
+      // } else { // tail part
+      //   return nextSamplePos_ - (drle_.getSumOfWeight() - txtPos);
+      // }
     }
 
 
     /*!
-     * @brief Compute the first occ from a valid pattracker.
+     * @brief Compute the first occ (ending position) from valid PatTracker.
      */
     uint64_t calcFstOcc
     (
-     const pattracker & tracker
+     const PatTracker & tracker
      ) const noexcept {
+      if (std::get<0>(tracker) == emPos_) {
+        return getLenWithoutEndmarker();
+      }
       const uint64_t idxS = std::get<2>(tracker);
-      const uint64_t key = drle_.getSampleFromIdxS(drle_.getNextIdxS(idxS));
-      return succ_.nextPos(key) + std::get<3>(tracker);
+      if (idxS) {
+        const uint64_t key = drle_.getSampleFromIdxS(drle_.getNextIdxS(idxS));
+        return calcNextPos(key) + std::get<3>(tracker);
+      }
+      return std::get<3>(tracker);
     }
 
 
     /*!
      * @brief Compute bwt-interval for cW from bwt-interval for W.
-     * @note Intervals are [left..right), where right bound is excluded.
+     * @note Intervals are [left..right), where right bound is exclusive.
      */
     bool lfMap
     (
-     pattracker & tracker,
+     PatTracker & tracker, //!< Valid PatTracker.
      const CharT ch
      ) const noexcept {
       // {//debug
@@ -342,7 +368,7 @@ namespace itmmti
 
       uint64_t r_in_drle = std::get<1>(tracker) - (std::get<1>(tracker) > emPos_); // Taking (implicit) end-marker into account.
       //// +1 because in F we are not taking into account the end-marker,
-      //// which is in position 0 but not explicitly stored in F. */
+      //// which is in position 0 but not explicitly stored in F.
       r_in_drle = drle_.rank(ch, r_in_drle - 1, true) + 1;
       if (r_in_drle <= 1) {
         return false;
@@ -378,9 +404,7 @@ namespace itmmti
       //// Update tracker.
       std::get<0>(tracker) = l_in_drle;
       std::get<1>(tracker) = r_in_drle;
-      if (l_in_drle == emPos_) {
-        std::get<2>(tracker) = drle_.getSumOfWeight();
-      } else if (ch == chNow) {
+      if (ch == chNow) {
         std::get<3>(tracker) += 1;
       } else {
         std::get<2>(tracker) = idxS;
@@ -392,12 +416,12 @@ namespace itmmti
 
 
     /*!
-     * @brief Compute bwt-interval for cW from bwt-interval for W
-     * @note Intervals are [left, right) : right bound is excluded
+     * @brief Compute bwt-interval for cW from bwt-interval for W.
+     * @note Intervals are [left..right), where right bound is exclusive.
      */
-    bwtintvl lfMap
+    BwtIntvl lfMap
     (
-     const bwtintvl intvl,
+     const BwtIntvl intvl,
      const CharT ch
      ) const noexcept {
       assert(intvl.first <= getLenWithEndmarker() && intvl.second <= getLenWithEndmarker());
@@ -451,6 +475,36 @@ namespace itmmti
     }
 
 
+    /*!
+     * @brief Get initial patter tracker based on current rindex.
+     */
+    PatTracker getInitialPatTracker() {
+      assert(isReady());
+
+      return {0, getLenWithEndmarker(), 0, 0};
+    }
+
+
+    /*!
+     * @brief Get number of occurrences from valid PatTracker.
+     */
+    bool includeEmPos(const PatTracker & tracker) {
+      assert(isReady());
+
+      return (std::get<0>(tracker) <= emPos_ && emPos_ < std::get<1>(tracker));
+    }
+
+
+    /*!
+     * @brief Get number of occurrences from valid PatTracker.
+     */
+    uint64_t getNumOcc(const PatTracker & tracker) {
+      assert(isReady());
+
+      return std::get<1>(tracker) - std::get<0>(tracker);
+    }
+
+
     //////////////////////////////// statistics
     /*!
      * @brief Calculate total memory usage in bytes.
@@ -475,13 +529,20 @@ namespace itmmti
      const bool verbose
      ) const noexcept {
       os << "OnlineRindex object (" << this << ") " << __func__ << "(" << verbose << ") BEGIN" << std::endl;
-      os << "emPos_ = " << emPos_ << ", em_ = " << em_ << std::endl;
+      os << "emPos_ = " << emPos_ << ", em_ = " << em_
+         << ", prevSamplePos_ = " << prevSamplePos_ << ", nextSamplePos_ = " << nextSamplePos_ << std::endl;
       if (isReady()) {
         const size_t totalBytes = drle_.calcMemBytes(true) + succ_.calcMemBytes(true);
         os << "Total memory usage: " << totalBytes << " bytes = "
            << (double)(totalBytes) / 1024 << " KiB = "
            << ((double)(totalBytes) / 1024) / 1024 << " MiB" << std::endl;
-        drle_.printStatistics(os, verbose);
+        {//debug
+          drle_.printStatistics(os, verbose);
+          drle_.rootM()->printStatistics(os, verbose);
+          drle_.printDebugInfoOfBtmM(0, os);
+          drle_.printDebugInfoOfBtmS(0, os);
+          os << drle_.getSampleFromIdxM(0) << ", " << drle_.getSampleFromIdxM(0) << ", " << drle_.getSampleFromIdxM(0) << std::endl;
+        }
         succ_.printStatistics(os, verbose);
       } else {
         os << "Data structure is empty (not ready)." << std::endl;
@@ -494,35 +555,73 @@ namespace itmmti
     (
      std::ostream & os //!< Output stream, e.g., std::cout.
      ) const noexcept {
-      os << "emPos_ = " << emPos_ << ", em_ = " << em_ << std::endl;
+      os << "emPos_ = " << emPos_ << ", em_ = " << em_ << ", prevSamplePos_ = " << prevSamplePos_
+         << ", nextSamplePos_ = " << nextSamplePos_ << ", lastSamplePos_ = " << lastSamplePos_ << std::endl;
       // drle_.printDebugInfo(os);
       succ_.printDebugInfo(os);
 
       //// Check correctness of sampled position links.
-      uint64_t bwtpos = lfMap(0);
-      for (uint64_t len = 1; len < getLenWithEndmarker() - 1; ++len) {
-        uint64_t temp = bwtpos - (bwtpos > emPos_);
-        uint64_t idxM = drle_.searchPosM(temp); // temp is modified
-        // os << "check: len = " << len << ", bwtpos = " << bwtpos << ", fbwtpos = " << bwtpos - (bwtpos > emPos_)
-        //    << ", temp = " << temp << ", weight = " << drle_.getWeightFromIdxM(idxM) << ", sample = " << drle_.getSampleFromIdxM(idxM) << std::endl;
-        if (temp == 0) {
-          const uint64_t prevPos = drle_.getSampleFromIdxM(idxM);
-          const uint64_t nextPos = succ_.nextPos(prevPos);
-          if (len != nextPos) {
-            os << "error: bwtpos = " << bwtpos - (bwtpos > emPos_) << ", len = " << len << ", nextPos = " << nextPos << std::endl;
-            drle_.printDebugInfoOfBtmM(idxM / kBtmBM, os);
-            succ_.printStatistics(os, true);
+      const auto len = getLenWithoutEndmarker();
+      for (uint64_t txtPos = 0, bwtPos = 0; bwtPos < getLenWithEndmarker(); ++bwtPos) {
+        if (bwtPos == emPos_) {
+          if (txtPos != len) {
+            os << "!error!: bwtPos = " << bwtPos << ", txtPos = " << txtPos << ", len = " << len << std::endl;
+          }
+        } else if (bwtPos == emPos_ + 1) {
+          if (txtPos != nextSamplePos_) {
+            os << "!error!: bwtPos = " << bwtPos << ", txtPos = " << txtPos << ", nextSamplePos_ = " << nextSamplePos_ << std::endl;
+          }
+        } else if (bwtPos == emPos_ - 1) {
+          if (txtPos != prevSamplePos_) {
+            os << "!error!: bwtPos = " << bwtPos << ", txtPos = " << txtPos << ", prevSamplePos_ = " << prevSamplePos_ << std::endl;
+          }
+        } else {
+          uint64_t temp = bwtPos - (bwtPos > emPos_);
+          auto idxM = drle_.searchPosM(temp);
+          if (temp + 1 == drle_.getWeightFromIdxM(idxM)) {
+            idxM = drle_.getNextIdxM(idxM);
+            if (idxM != BTreeNodeT::NOTFOUND) {
+              const uint64_t sample = drle_.getSampleFromIdxM(idxM);
+              if (txtPos != sample) {
+                os << "!error!: bwtPos = " << bwtPos << ", txtPos = " << txtPos << ", sample = " << sample << std::endl;
+              }
+            } else {
+              if (txtPos != lastSamplePos_) {
+                os << "!error!: bwtPos = " << bwtPos << ", txtPos = " << txtPos << ", lastSamplePos_ = " << lastSamplePos_ << std::endl;
+              }
+            }
           }
         }
-        if (temp + 1 == drle_.getWeightFromIdxM(idxM)) {
-          idxM = drle_.getNextIdxM(idxM);
-          const uint64_t sample = drle_.getSampleFromIdxM(idxM);
-          if (len != sample) {
-            os << "error: bwtpos = " << bwtpos - (bwtpos > emPos_) << ", len = " << len << ", sample = " << sample << std::endl;
-          }
-        }
-        bwtpos = lfMap(bwtpos);
+        txtPos = calcNextPos(txtPos);
       }
+    }
+
+
+    bool checkDecompress
+    (
+     std::ifstream & ifs
+     ) const noexcept {
+      // {//debug
+      //   std::cerr << __func__ << std::endl;
+      // }
+
+      uint64_t pos = 0;
+      for (uint64_t i = 0; i < this->getLenWithEndmarker() - 1; ++i) {
+        pos -= (pos > emPos_);
+        // std::cout << "T[" << i << "] searchPos(" << pos << ") ";
+        const uint64_t idxM = drle_.searchPosM(pos);
+        const auto ch = static_cast<unsigned char>(drle_.getCharFromIdxM(idxM));
+        // std::cout << "idxM = " << idxM << ", pos = " << pos << ", ch = " << (int)ch << "(" << ch << ")" << std::endl;
+        char c; // Assume that the input character fits in char.
+        ifs.get(c);
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc != ch) {
+          std::cerr << "error: bad expansion at i = " << i << ", (" << ch << ") should be (" << uc << ")" << ", idxM = " << idxM << ", pos = " << pos << std::endl;
+          return false;
+        }
+        pos = drle_.rank(ch, idxM, pos, true);
+      }
+      return true;
     }
   };
 };

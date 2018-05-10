@@ -54,8 +54,8 @@ int main(int argc, char *argv[])
   using DynRleT = DynRleForRlbwt<WBitsBlockVec<1024>, Samples_WBitsBlockVec<1024>, BtmMInfoT, BtmSInfoT>;
   using BtmNodeInSucc = BtmNodeForPSumWithVal<16>; // BtmNode arity = {16, 32, 64, 128}.
   using DynSuccT = DynSuccForRindex<BTreeNodeT, BtmNodeInSucc>;
-  using OnlineRlbwtIndexT = OnlineRlbwtIndex<DynRleT, DynSuccT>;
-  OnlineRlbwtIndexT rindex(1);
+  using RindexT = OnlineRlbwtIndex<DynRleT, DynSuccT>;
+  RindexT rindex(1);
   SizeT pos = 0; // Current txt-pos (0base)
   SizeT l = 0; // Length of current LZ phrase prefix
   char c; // Assume that the input character fits in char.
@@ -74,23 +74,21 @@ int main(int argc, char *argv[])
       if (pos > last_step + (step - 1)) {
         last_step = pos;
         std::cout << " " << pos << " characters processed ..." << std::endl;
-        // rindex.printStatistics(std::cout, false);
         // {//debug
         //   rindex.printDebugInfo(std::cout);
         // }
+        // rindex.printStatistics(std::cout, false);
       }
     }
 
     rindex.extend(uc);
-    if (verbose) {
-      // if (pos >= 8927) {
-      //   std::cout << "Status after inserting pos = " << pos << std::endl;
-      //   rindex.printDebugInfo(std::cout);
-      //   if (pos >= 8929) {
-      //     exit(1);
-      //   }
-      // }
-    }
+    // if (verbose) {
+    //   if (pos > 0) {
+    //     std::cout << "Status after inserting pos = " << pos << std::endl;
+    //     rindex.printDebugInfo(std::cout);
+    //     // rindex.printStatistics(std::cout);
+    //   }
+    // }
     ++pos;
   }
 
@@ -99,8 +97,46 @@ int main(int argc, char *argv[])
   auto t2 = std::chrono::high_resolution_clock::now();
   double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
   std::cout << "R-index construction done. " << sec << " sec" << std::endl;
-  rindex.printStatistics(std::cout, false);
   rindex.printDebugInfo(std::cout);
+  // rindex.printStatistics(std::cout, true);
+
+  //// Pattern search Demo
+  {
+    const uint64_t lenWithoutEm = rindex.getLenWithEndmarker() - 1;
+    while (true) {
+      char line[1023];
+      std::cout << "Type a pattern to search. Or enter empty string to quit." << std::endl;
+      std::cin.getline(line, sizeof(line));
+      std::string pat(line);
+      if (pat.length() == 0) {
+        break;
+      }
+      const auto len = pat.length();
+      std::cout << "Pttern length = " << len << std::endl;
+      auto tracker = rindex.getInitialPatTracker();
+      bool match = (pat.length() > 0);
+      for (uint64_t i = 0; match && i < len; ++i) {
+        unsigned char c = pat[i];
+        match = rindex.lfMap(tracker, c);
+      }
+      if (match) {
+        auto numOcc = rindex.getNumOcc(tracker);
+        std::cout << "NumOcc = " << numOcc << ", BwtInterval = [" << std::get<0>(tracker) << ".."
+                  << std::get<1>(tracker) << ")" << std::endl;
+        //// Note that the returned occ is end position (exclusive) of pattern.
+        //// To get beginning position, subtract pattern length.
+        auto endPos = rindex.calcFstOcc(tracker);
+        for ( ; numOcc; --numOcc) {
+          std::cout << endPos - len << ", " << std::endl;
+          endPos = rindex.calcNextPos(endPos);
+        }
+        std::cout << std::endl;
+      } else {
+        std::cout << "Pttern does not match." << std::endl;
+      }
+    }
+    std::cout << "Quit." << std::endl;
+  }
 
   return 0;
 }
