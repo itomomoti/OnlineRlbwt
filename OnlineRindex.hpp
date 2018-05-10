@@ -478,7 +478,7 @@ namespace itmmti
     /*!
      * @brief Get initial patter tracker based on current rindex.
      */
-    PatTracker getInitialPatTracker() {
+    PatTracker getInitialPatTracker() const noexcept {
       assert(isReady());
 
       return {0, getLenWithEndmarker(), 0, 0};
@@ -488,7 +488,7 @@ namespace itmmti
     /*!
      * @brief Get number of occurrences from valid PatTracker.
      */
-    bool includeEmPos(const PatTracker & tracker) {
+    bool includeEmPos(const PatTracker & tracker) const noexcept {
       assert(isReady());
 
       return (std::get<0>(tracker) <= emPos_ && emPos_ < std::get<1>(tracker));
@@ -498,7 +498,7 @@ namespace itmmti
     /*!
      * @brief Get number of occurrences from valid PatTracker.
      */
-    uint64_t getNumOcc(const PatTracker & tracker) {
+    uint64_t getNumOcc(const PatTracker & tracker) const noexcept {
       assert(isReady());
 
       return std::get<1>(tracker) - std::get<0>(tracker);
@@ -533,16 +533,10 @@ namespace itmmti
          << ", prevSamplePos_ = " << prevSamplePos_ << ", nextSamplePos_ = " << nextSamplePos_ << std::endl;
       if (isReady()) {
         const size_t totalBytes = drle_.calcMemBytes(true) + succ_.calcMemBytes(true);
-        os << "Total memory usage: " << totalBytes << " bytes = "
+        os << "Total: " << totalBytes << " bytes = "
            << (double)(totalBytes) / 1024 << " KiB = "
            << ((double)(totalBytes) / 1024) / 1024 << " MiB" << std::endl;
-        {//debug
-          drle_.printStatistics(os, verbose);
-          drle_.rootM()->printStatistics(os, verbose);
-          drle_.printDebugInfoOfBtmM(0, os);
-          drle_.printDebugInfoOfBtmS(0, os);
-          os << drle_.getSampleFromIdxM(0) << ", " << drle_.getSampleFromIdxM(0) << ", " << drle_.getSampleFromIdxM(0) << std::endl;
-        }
+        drle_.printStatistics(os, verbose);
         succ_.printStatistics(os, verbose);
       } else {
         os << "Data structure is empty (not ready)." << std::endl;
@@ -616,7 +610,7 @@ namespace itmmti
         ifs.get(c);
         unsigned char uc = static_cast<unsigned char>(c);
         if (uc != ch) {
-          std::cerr << "error: bad expansion at i = " << i << ", (" << ch << ") should be (" << uc << ")" << ", idxM = " << idxM << ", pos = " << pos << std::endl;
+          std::cerr << "!error!: bad expansion at i = " << i << ", (" << ch << ") should be (" << uc << ")" << ", idxM = " << idxM << ", pos = " << pos << std::endl;
           return false;
         }
         pos = drle_.rank(ch, idxM, pos, true);

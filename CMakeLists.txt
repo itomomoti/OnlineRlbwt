@@ -54,6 +54,11 @@ add_executable(OnlineRindex OnlineRindex.cpp)
 target_link_libraries(OnlineRindex Basics)
 target_link_libraries(OnlineRindex BTree)
 
+add_executable(OnlineRindex_Demo OnlineRindex_Demo.cpp)
+target_link_libraries(OnlineRindex_Demo Basics)
+target_link_libraries(OnlineRindex_Demo BTree)
+
+
 
 #### TEST
 #### To enable this, add "-DTESTING=1" or "-DTESTING_ALL=1" (for testing all subprojects) when running cmake

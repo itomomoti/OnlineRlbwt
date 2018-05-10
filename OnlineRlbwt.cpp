@@ -96,11 +96,12 @@ int main(int argc, char *argv[])
     t1 = std::chrono::high_resolution_clock::now();
     std::cout << "Checking RLBWT inversion ..." << std::endl;
     std::ifstream ifssss(in);
-    if (!(rlbwt.checkDecompress(ifssss))) {
+    if (rlbwt.checkDecompress(ifssss)) {
+      auto t2 = std::chrono::high_resolution_clock::now();
+      double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
+      std::cout << "RLBWT decompressed correctly. " << sec << " sec" << std::endl;
+    } else {
       std::cout << "RLBWT inversion failed." << std::endl;
     }
-    auto t2 = std::chrono::high_resolution_clock::now();
-    double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
-    std::cout << "RLBWT decompressed correctly. " << sec << " sec" << std::endl;
   }
 }

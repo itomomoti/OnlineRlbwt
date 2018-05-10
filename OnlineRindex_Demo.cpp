@@ -5,10 +5,10 @@
  * http://opensource.org/licenses/mit-license.php
  */
 /*!
- * @file OnlineRindex.cpp
- * @brief Online r-index, index based on Run-length encoded Burrows–Wheeler transform (RLBWT).
+ * @file OnlineRindex_Demo.cpp
+ * @brief Demonstration for online r-index, index based on Run-length encoded Burrows–Wheeler transform (RLBWT).
  * @author Tomohiro I
- * @date 2018-05-04
+ * @date 2018-05-10
  */
 #include <stdint.h>
 
@@ -25,25 +25,105 @@
 
 
 using namespace itmmti;
-using SizeT = uint32_t; // Text length should fit in SizeT.
+using SizeT = uint64_t; // Text length should fit in SizeT.
+
+template<typename RindexT>
+void searchOnRindex(const RindexT & rindex, std::string message)
+{
+  //// Pattern search Demo
+  const uint64_t lenWithoutEm = rindex.getLenWithEndmarker() - 1;
+  while (true) {
+    constexpr static uint64_t bufsize = 512;
+    char buffer[bufsize] = "";
+    std::cout << message << std::endl;
+    if (std::fgets(buffer, bufsize, stdin) == NULL || buffer[0] == '\n') {
+      break;
+    }
+    uint64_t len = std::strlen(buffer);
+    if (len > 0) {
+      if (buffer[len - 1] == '\n') {
+        buffer[--len] = '\0';
+      } else {
+        while (getchar() != '\n') {};
+      }
+    }
+    std::cout << "\"" << buffer << "\"" << std::endl;
+
+    //// Counting...
+    auto t1 = std::chrono::high_resolution_clock::now();
+    auto tracker = rindex.getInitialPatTracker();
+    bool match = true;
+    uint64_t plen = 0;
+    for (unsigned char c = buffer[plen]; c != '\0'; c = buffer[++plen]) {
+      match = rindex.lfMap(tracker, c);
+      if (!match) break;
+    }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double microsec = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    std::cout << "Counting: done in " << microsec << " micro sec. Len = " << len << ". Prefix match length = " << plen << ". ";
+
+    if (match) {
+      const auto numOcc = rindex.getNumOcc(tracker);
+      std::cout << "NumOcc = " << numOcc << ". BwtInterval = [" << std::get<0>(tracker) << ".."
+                << std::get<1>(tracker) << ")" << std::endl;
+      //// Note that the returned occ is end position (exclusive) of pattern.
+      //// To get beginning position, subtract pattern length.
+      unsigned char c;
+      do {
+        std::cout << "Print them all (y/n)? Or locating without printing (l): ";
+        c = getchar();
+        while (getchar() != '\n') {};
+      } while (!(c == 'y' || c == 'n' || c == 'l'));
+      //// Locating...
+      if (c == 'l') { // Locating without printing.
+        t1 = std::chrono::high_resolution_clock::now();
+        auto endPos = rindex.calcFstOcc(tracker);
+        for (auto num = numOcc; num; --num) {
+          endPos = rindex.calcNextPos(endPos);
+        }
+        t2 = std::chrono::high_resolution_clock::now();
+        microsec = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+        std::cout << "Locating: done in " << microsec << " micro sec. "
+                  << microsec / numOcc << " mirco sec. each." << std::endl;
+        if (!rindex.isReady()) { // dummy code to prevent optimization delete the locating codes
+          std::cout << endPos << std::endl;
+        }
+      } else if (c == 'y') { // Locating with printing.
+        t1 = std::chrono::high_resolution_clock::now();
+        auto endPos = rindex.calcFstOcc(tracker);
+        for (auto num = numOcc; num; --num) {
+          std::cout << endPos - len << ", ";
+          endPos = rindex.calcNextPos(endPos);
+        }
+        std::cout << std::endl;
+        t2 = std::chrono::high_resolution_clock::now();
+        microsec = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+        std::cout << "Locating: done in " << microsec << " micro sec. " << microsec / numOcc << " mirco sec. each." << std::endl;
+      }
+    } else {
+      std::cout << "Pttern does not match." << std::endl;
+    }
+  }
+}
+
 
 int main(int argc, char *argv[])
 {
   cmdline::parser parser;
   parser.add<std::string>("input", 'i', "input file name", true);
+  parser.add<size_t>("step", 's', "number of characters to index in a single step", false, 1000000);
   parser.add<bool>("verbose", 'v', "verbose", false, 0);
   parser.add("help", 0, "print help");
 
   parser.parse_check(argc, argv);
   const std::string in = parser.get<std::string>("input");
   const bool verbose = parser.get<bool>("verbose");
+  const size_t step = parser.get<size_t>("step");
 
-  auto t1 = std::chrono::high_resolution_clock::now();
-  std::cout << "R-index constructing ..." << std::endl;
+  std::cout << "R-index constructing..." << std::endl;
 
   std::ifstream ifs(in);
 
-  const size_t step = 1000000; // Print status every step characters.
   size_t last_step = 0;
 
   using BTreeNodeT = BTreeNode<16>; // BTree arity = {16, 32, 64, 128}
@@ -57,7 +137,6 @@ int main(int argc, char *argv[])
   using RindexT = OnlineRlbwtIndex<DynRleT, DynSuccT>;
   RindexT rindex(1);
   SizeT pos = 0; // Current txt-pos (0base)
-  SizeT l = 0; // Length of current LZ phrase prefix
   char c; // Assume that the input character fits in char.
   unsigned char uc;
 
@@ -65,78 +144,32 @@ int main(int argc, char *argv[])
     ifs.get(c);
     uc = static_cast<unsigned char>(c);
     if (verbose) {
-      // if (pos >= 0) {
-      //   std::cerr << "loop: " << pos
-      //             << ", prev = " << rindex.getPrevSamplePos()
-      //             << ", next = " << rindex.getNextSamplePos()
-      //             << ", insert " << (int)c << "(" << c << ")" << " at " << rindex.getEndmarkerPos() << std::endl;
-      // }
       if (pos > last_step + (step - 1)) {
         last_step = pos;
-        std::cout << " " << pos << " characters processed ..." << std::endl;
-        // {//debug
-        //   rindex.printDebugInfo(std::cout);
-        // }
-        // rindex.printStatistics(std::cout, false);
+        const size_t totalBytes = rindex.calcMemBytes(true);
+        std::cout << " " << pos << " characters indexed in "
+                  << totalBytes << " bytes = "
+                  << (double)(totalBytes) / 1024 << " KiB = "
+                  << ((double)(totalBytes) / 1024) / 1024 << " MiB." << std::endl;
+        searchOnRindex(rindex, "Type a pattern to search. Or enter empty string to continue indexing.");
+        std::cout << "Quitted searching phase and continue indexing next " << step << " characters..." << std::endl;
       }
     }
 
     rindex.extend(uc);
-    // if (verbose) {
-    //   if (pos > 0) {
-    //     std::cout << "Status after inserting pos = " << pos << std::endl;
-    //     rindex.printDebugInfo(std::cout);
-    //     // rindex.printStatistics(std::cout);
-    //   }
-    // }
     ++pos;
   }
 
   ifs.close();
 
-  auto t2 = std::chrono::high_resolution_clock::now();
-  double sec = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
-  std::cout << "R-index construction done. " << sec << " sec" << std::endl;
-  rindex.printDebugInfo(std::cout);
-  // rindex.printStatistics(std::cout, true);
+  const size_t totalBytes = rindex.calcMemBytes(true);
+  std::cout << " " << pos << " characters indexed in "
+            << totalBytes << " bytes = "
+            << (double)(totalBytes) / 1024 << " KiB = "
+            << ((double)(totalBytes) / 1024) / 1024 << " MiB." << std::endl;
+  searchOnRindex(rindex, "Type a pattern to search. Or enter empty string to quit.");
+  std::cout << "Quitted." << std::endl;
 
-  //// Pattern search Demo
-  {
-    const uint64_t lenWithoutEm = rindex.getLenWithEndmarker() - 1;
-    while (true) {
-      char line[1023];
-      std::cout << "Type a pattern to search. Or enter empty string to quit." << std::endl;
-      std::cin.getline(line, sizeof(line));
-      std::string pat(line);
-      if (pat.length() == 0) {
-        break;
-      }
-      const auto len = pat.length();
-      std::cout << "Pttern length = " << len << std::endl;
-      auto tracker = rindex.getInitialPatTracker();
-      bool match = (pat.length() > 0);
-      for (uint64_t i = 0; match && i < len; ++i) {
-        unsigned char c = pat[i];
-        match = rindex.lfMap(tracker, c);
-      }
-      if (match) {
-        auto numOcc = rindex.getNumOcc(tracker);
-        std::cout << "NumOcc = " << numOcc << ", BwtInterval = [" << std::get<0>(tracker) << ".."
-                  << std::get<1>(tracker) << ")" << std::endl;
-        //// Note that the returned occ is end position (exclusive) of pattern.
-        //// To get beginning position, subtract pattern length.
-        auto endPos = rindex.calcFstOcc(tracker);
-        for ( ; numOcc; --numOcc) {
-          std::cout << endPos - len << ", " << std::endl;
-          endPos = rindex.calcNextPos(endPos);
-        }
-        std::cout << std::endl;
-      } else {
-        std::cout << "Pttern does not match." << std::endl;
-      }
-    }
-    std::cout << "Quit." << std::endl;
-  }
 
   return 0;
 }
