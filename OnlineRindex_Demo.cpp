@@ -70,7 +70,7 @@ void searchOnRindex(const RindexT & rindex, std::string message)
       //// To get beginning position, subtract pattern length.
       unsigned char c;
       do {
-        std::cout << "Print them all (y/n)? Or locating without printing (l): ";
+        std::cout << "Print them all (y/n)? Or locate without printing (l): ";
         c = getchar();
         while (getchar() != '\n') {};
       } while (!(c == 'y' || c == 'n' || c == 'l'));
@@ -84,7 +84,7 @@ void searchOnRindex(const RindexT & rindex, std::string message)
         t2 = std::chrono::high_resolution_clock::now();
         microsec = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
         std::cout << "Locating: done in " << microsec << " micro sec. "
-                  << microsec / numOcc << " mirco sec. each." << std::endl;
+                  << microsec / numOcc << " micro sec. each." << std::endl;
         if (!rindex.isReady()) { // dummy code to prevent optimization delete the locating codes
           std::cout << endPos << std::endl;
         }
@@ -98,7 +98,7 @@ void searchOnRindex(const RindexT & rindex, std::string message)
         std::cout << std::endl;
         t2 = std::chrono::high_resolution_clock::now();
         microsec = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-        std::cout << "Locating: done in " << microsec << " micro sec. " << microsec / numOcc << " mirco sec. each." << std::endl;
+        std::cout << "Locating: done in " << microsec << " micro sec. " << microsec / numOcc << " micro sec. each." << std::endl;
       }
     } else {
       std::cout << "Pttern does not match." << std::endl;
