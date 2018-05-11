@@ -143,17 +143,19 @@ int main(int argc, char *argv[])
   while (ifs.peek() != std::ios::traits_type::eof()) {
     ifs.get(c);
     uc = static_cast<unsigned char>(c);
-    if (verbose) {
-      if (pos > last_step + (step - 1)) {
-        last_step = pos;
-        const size_t totalBytes = rindex.calcMemBytes(true);
-        std::cout << " " << pos << " characters indexed in "
-                  << totalBytes << " bytes = "
-                  << (double)(totalBytes) / 1024 << " KiB = "
-                  << ((double)(totalBytes) / 1024) / 1024 << " MiB." << std::endl;
-        searchOnRindex(rindex, "Type a pattern to search. Or enter empty string to continue indexing.");
-        std::cout << "Quitted searching phase and continue indexing next " << step << " characters..." << std::endl;
+
+    if (pos > last_step + (step - 1)) {
+      if (verbose) {
+        rindex.printStatistics(std::cout, false);
       }
+      last_step = pos;
+      const size_t totalBytes = rindex.calcMemBytes(true);
+      std::cout << " " << pos << " characters indexed in "
+                << totalBytes << " bytes = "
+                << (double)(totalBytes) / 1024 << " KiB = "
+                << ((double)(totalBytes) / 1024) / 1024 << " MiB." << std::endl;
+      searchOnRindex(rindex, "Type a pattern to search. Or enter empty string to continue indexing.");
+      std::cout << "Quitted searching phase and continue indexing next " << step << " characters..." << std::endl;
     }
 
     rindex.extend(uc);
@@ -169,7 +171,9 @@ int main(int argc, char *argv[])
             << ((double)(totalBytes) / 1024) / 1024 << " MiB." << std::endl;
   searchOnRindex(rindex, "Type a pattern to search. Or enter empty string to quit.");
   std::cout << "Quitted." << std::endl;
-
+  if (verbose) {
+    rindex.printStatistics(std::cout, false);
+  }
 
   return 0;
 }
